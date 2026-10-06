@@ -1,0 +1,46 @@
+# AI Coding Plan 配额预热器配置
+# 管理密钥：推荐用环境变量 QUOTA_WARMER_MANAGEMENT_KEY 注入（优先于本文件的 management_key）。
+# 两者都为空时，管理接口全部停用（仅可访问 /healthz 与页面本身）。
+
+listen: ":1688"
+timezone: "Asia/Shanghai"
+max_log_entries: 200
+state_file: "data/state.json"
+# management_key: "change-me"
+
+# 账号列表：每个 Provider 一个标签页。
+# provider 是标签页名称（唯一即可）；api_url 填 Base URL 或完整端点均可。
+# 可选：给账号配置专属 schedules（见下方注释），配置后忽略全局兜底日程。
+accounts:
+  - provider: "volcengine"
+    api_url: "https://ark.cn-beijing.volces.com/api/coding/v3"
+    api_format: "openai"               # openai（OpenAI 兼容）| anthropic（Anthropic 兼容）
+    api_key: "$QUOTA_WARMER_API_KEY_VOLCENGINE"
+    model: "ark-code-latest"
+    prompt: "hello"
+    # 专属日程示例（取消注释后此账号仅按 06:00/12:00/18:00 预热）：
+    # schedules:
+    #   - id: "volc-morning-06"
+    #     at: "06:00"
+    #     enabled: true
+    #   - id: "volc-noon-12"
+    #     at: "12:00"
+    #     enabled: true
+    #   - id: "volc-evening-18"
+    #     at: "18:00"
+    #     enabled: true
+
+# 全局兜底日程：每天在 timezone 时区执行一次；未配置专属日程的账号按此预热。
+schedules:
+  - id: "morning-05"
+    at: "05:00"
+    enabled: true
+  - id: "noon-10"
+    at: "10:00"
+    enabled: true
+  - id: "afternoon-15"
+    at: "15:00"
+    enabled: true
+  - id: "evening-20"
+    at: "20:00"
+    enabled: true

@@ -1,0 +1,24 @@
+# 直接拉取镜像运行（不本地构建）。
+# 默认使用 Docker Hub 镜像；发布到其他仓库时改 image 为对应地址即可。
+services:
+  coding-plan-5h-quota-warmer:
+    # TODO: 发布后替换为实际镜像地址，如 docker.io/<用户名>/coding-plan-5h-quota-warmer:latest
+    # 或 GitHub Container Registry：ghcr.io/<用户名>/coding-plan-5h-quota-warmer:latest
+    image: docker.io/becase/coding-plan-5h-quota-warmer:latest
+    container_name: coding-plan-5h-quota-warmer
+    restart: unless-stopped
+    # 预留足够的停止宽限期，覆盖执行中的预热请求（客户端超时 60s）
+    stop_grace_period: 20s
+    ports:
+      - "1688:1688"
+    volumes:
+      # 可写挂载：管理页面保存的设置会写回此文件
+      - ./config.yaml:/app/config.yaml
+      # 运行状态（上次执行、结果、日志）持久化，与默认 state_file "data/state.json" 对应
+      - ./data:/app/data
+    # .env 中的 QUOTA_WARMER_API_KEY_<PROVIDER> 等变量注入容器（管理密钥仍可被上方 environment 覆盖）
+    # 注意：使用兼容旧版 Compose 的短语法，要求 .env 文件必须存在（cp .env.example .env）
+    env_file:
+      - .env
+    environment:
+      QUOTA_WARMER_MANAGEMENT_KEY: ${QUOTA_WARMER_MANAGEMENT_KEY}

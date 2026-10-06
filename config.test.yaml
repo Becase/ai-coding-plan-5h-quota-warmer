@@ -1,0 +1,37 @@
+# 本地验证用测试配置（指向 mock_endpoint.py），勿用于生产
+listen: ":1688"
+timezone: "Asia/Shanghai"
+max_log_entries: 50
+state_file: "data/state.test.json"
+management_key: "test-key"
+
+accounts:
+  - provider: "volcano"
+    api_url: "http://127.0.0.1:8000/api/coding/v3"
+    api_format: "openai"
+    api_key: "sk-test-1234567890abcdef"
+    model: "test-model"
+    prompt: "hello"
+    # 专属日程：仅此账号按 04:00/09:00 预热，忽略全局日程
+    schedules:
+      - id: "volc-early"
+        at: "04:00"
+        enabled: true
+      - id: "volc-mid"
+        at: "09:00"
+        enabled: true
+  - provider: "mock-claude"
+    api_url: "http://127.0.0.1:8000/api/coding"
+    api_format: "anthropic"
+    api_key: "sk-test-another-key-9876"
+    model: "test-claude-model"
+    prompt: "hello"
+
+# 全局兜底日程（仅 mock-claude 使用）
+schedules:
+  - id: "morning-05"
+    at: "05:00"
+    enabled: true
+  - id: "noon-10"
+    at: "10:00"
+    enabled: true

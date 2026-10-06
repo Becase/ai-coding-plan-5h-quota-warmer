@@ -1,0 +1,34 @@
+# Docker 构建上下文精简：Dockerfile 只 COPY src/，
+# 其余全部排除，避免上传无用文件、密钥与产物到构建器。
+
+# 版本控制与编辑器
+.git/
+.gitignore
+.claude/
+.vscode/
+.idea/
+
+# 文档
+*.md
+
+# Docker 自身（不打入上下文）
+Dockerfile
+docker-compose.yml
+docker-compose-build.yml
+.dockerignore
+
+# 配置与密钥（容器内由挂载/环境变量提供）
+config.yaml
+config.test.yaml
+.env
+
+# 运行数据与产物
+data/
+dist/
+mock_endpoint.py
+coding-plan-5h-quota-warmer*
+quota-warmer*
+*.exe
+
+# 临时文件
+*.tmp

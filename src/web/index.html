@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Coding Plan 配额预热器</title>
+  <style>
+    :root {
+      color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      --card-bg: #fff; --card-border: #e3e7ed; --tab-bg: #eef1f5; --tab-fg: #5f6b7a; --fg: #1f2937;
+    }
+    body { margin: 0; background: #f7f8fa; color: var(--fg); }
+    main { max-width: 1100px; margin: 0 auto; padding: 28px 18px 48px; }
+    h1 { margin: 0; font-size: 28px; } h2 { margin: 0 0 14px; font-size: 18px; } h3 { margin: 14px 0 8px; font-size: 15px; }
+    .subtitle { color: #5f6b7a; margin: 8px 0 24px; }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 18px; margin: 16px 0; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+    .field { display: grid; gap: 6px; } label { font-weight: 600; font-size: 14px; } input, textarea, select, button { font: inherit; }
+    input, textarea, select { box-sizing: border-box; width: 100%; padding: 9px 10px; border: 1px solid #c9d1dc; border-radius: 7px; background: #fff; color: #1f2937; }
+    textarea { min-height: 76px; resize: vertical; } button { padding: 8px 12px; border: 1px solid #2867c8; border-radius: 7px; background: #2867c8; color: #fff; cursor: pointer; }
+    button.secondary { background: #fff; color: #24579f; } button.danger { border-color: #b42318; background: #fff; color: #b42318; } button.mini { padding: 5px 9px; font-size: 12px; } button:disabled { opacity: .55; cursor: wait; }
+    .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; } .grow { flex: 1 1 220px; }
+    .hint, .muted { color: #657181; font-size: 13px; } .notice { margin-top: 12px; min-height: 20px; } .notice.error { color: #b42318; } .notice.success { color: #027a48; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; } th, td { padding: 10px 8px; border-bottom: 1px solid #e7ebf0; text-align: left; vertical-align: top; } th { color: #5f6b7a; font-weight: 600; }
+    code { padding: 2px 4px; background: #f2f4f7; border-radius: 4px; }
+    .ok { color: #027a48; } .failed { color: #b42318; }
+    /* 文件夹式标签页：Tab 栏与内容区共用一个外壳卡片，选中标签与内容无缝相连 */
+    .shell { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; margin-top: 24px; box-shadow: 0 1px 2px rgba(0,0,0,.03); overflow: hidden; }
+    .tabs { display: flex; gap: 4px; flex-wrap: wrap; align-items: flex-end; padding: 10px 12px 0; background: var(--tab-bg); border-bottom: 1px solid var(--card-border); }
+    .tab { padding: 9px 16px; border: 1px solid var(--card-border); border-bottom: none; border-radius: 10px 10px 0 0; background: var(--tab-bg); color: var(--tab-fg); cursor: pointer; }
+    .tab.active { background: var(--card-bg); color: var(--fg); font-weight: 600; margin-bottom: -1px; border-bottom: 1px solid var(--card-bg); }
+    .tab.add { background: transparent; border-style: dashed; }
+    .tab-panel { padding: 18px; }
+    .schedule-row input[type="time"] { width: 130px; } .schedule-row input[type="text"] { width: 180px; }
+    .schedule-row label { white-space: nowrap; flex-shrink: 0; display: flex; gap: 6px; align-items: center; font-weight: 400; }
+    .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    #log-filter { width: auto; }
+    @media (prefers-color-scheme: dark) {
+      :root { --card-bg: #182230; --card-border: #344054; --tab-bg: #101828; --tab-fg: #a6b1c2; --fg: #e5e7eb; }
+      body { background: #111827; }
+      input, textarea, select, button.secondary, button.danger { background: #101828; color: #e5e7eb; border-color: #475467; }
+      .subtitle, .muted, .hint, th { color: #a6b1c2; }
+      td, th { border-color: #344054; }
+      code { background: #293548; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>AI Coding Plan 配额预热器</h1>
+  <p class="subtitle">每天固定时间向配置的模型端点发送一条预热消息，保持 5 小时配额窗口可用，避免每次从零等待。</p>
+
+  <section class="card">
+    <h2>管理密钥</h2>
+    <div class="row">
+      <div class="field grow"><label for="management-key">管理密钥</label><input id="management-key" type="password" autocomplete="current-password" placeholder="输入后按回车或点击读取数据"></div>
+      <label class="muted"><input id="remember-key" type="checkbox"> 在本机浏览器记住密钥</label>
+      <button id="reload" type="button" class="secondary">读取数据</button>
+    </div>
+    <p class="hint">未勾选“记住密钥”时，密钥保存在会话级存储（关闭浏览器标签页后清除，刷新页面保留）；勾选后保存在本机浏览器（长期有效）。公用设备勿勾选。页面本身不携带任何密钥数据。</p>
+    <div id="notice" class="notice" role="status"></div>
+  </section>
+
+  <div id="content" hidden>
+    <div class="shell">
+    <nav class="tabs" id="tabs"></nav>
+
+    <section class="tab-panel" id="panel-status" hidden>
+      <div class="row"><h2 class="grow">当前状态</h2><button id="run-now" type="button">立即预热</button></div>
+      <div id="summary" class="grid muted">加载中…</div>
+      <div style="margin-top:16px"><h3>下一次预热</h3><div id="next-runs" class="muted">暂无数据</div></div>
+      <div style="margin-top:16px"><h3>最近一次结果</h3><div id="last-results" class="muted">暂无数据</div></div>
+    </section>
+
+    <section class="tab-panel" id="panel-settings" hidden>
+      <h2>全局设置</h2>
+      <div class="grid">
+        <div class="field"><label for="timezone">时区</label><input id="timezone" type="text" required placeholder="Asia/Shanghai"></div>
+        <div class="field"><label for="max-logs">日志条数上限</label><input id="max-logs" type="number" min="1" max="2000"></div>
+      </div>
+      <div style="margin-top:20px"><h3>全局兜底日程</h3><p class="hint">未设置专属日程的 Provider 按此日程预热（每一行每天在设定时区执行一次）。专属日程在各自 Provider 标签页里设置。</p><div id="schedules"></div>
+        <div class="row" style="margin-top:12px"><button id="add-schedule" type="button" class="secondary">添加日程</button><button id="save-settings" type="button">保存设置</button></div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-logs" hidden>
+      <div class="row">
+        <h2 class="grow">运行日志</h2>
+        <select id="log-filter"></select>
+        <button id="load-logs" type="button" class="secondary">刷新日志</button>
+      </div>
+      <div id="logs" class="muted">暂无数据</div>
+    </section>
+
+    <section class="tab-panel" id="panel-account" hidden>
+      <div class="row"><h2 class="grow">Provider 设置</h2><button id="delete-account" type="button" class="danger">删除此 Provider</button></div>
+      <div class="grid">
+        <div class="field"><label for="acct-provider">Provider 标识（唯一，用于环境变量 QUOTA_WARMER_API_KEY_&lt;标识&gt;）</label><input id="acct-provider" type="text" required placeholder="volcano"></div>
+        <div class="field"><label for="acct-alias">别名（可选，标签页显示名称）</label><input id="acct-alias" type="text" placeholder="留空则显示 Provider 标识"></div>
+        <div class="field"><label for="acct-model">模型</label><input id="acct-model" type="text" required placeholder="例如 ark-code-latest"></div>
+        <div class="field"><label for="acct-format">请求格式</label>
+          <select id="acct-format">
+            <option value="openai">openai（OpenAI 兼容）</option>
+            <option value="anthropic">anthropic（Anthropic 兼容）</option>
+          </select>
+        </div>
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label for="acct-url">API 地址（Base URL 或完整端点均可）</label>
+        <input id="acct-url" type="text" required placeholder="https://ark.cn-beijing.volces.com/api/coding/v3">
+        <div class="presets">
+          <span class="hint">火山 Coding Plan 端点：</span>
+          <button type="button" class="secondary mini" data-url="https://ark.cn-beijing.volces.com/api/coding/v3" data-format="openai">OpenAI 兼容</button>
+          <button type="button" class="secondary mini" data-url="https://ark.cn-beijing.volces.com/api/coding" data-format="anthropic">Claude（Anthropic 兼容）</button>
+        </div>
+      </div>
+      <div class="field" style="margin-top:12px"><label for="acct-key">API 密钥</label><input id="acct-key" type="password" autocomplete="new-password" placeholder=""><p class="hint">留空表示沿用当前密钥；填写则替换。页面不会回显完整密钥。若已设置环境变量 QUOTA_WARMER_API_KEY_&lt;标识&gt;，重启后以环境变量为准。</p></div>
+      <div class="field" style="margin-top:12px"><label for="acct-prompt">预热消息</label><textarea id="acct-prompt" required placeholder="hello"></textarea></div>
+      <div style="margin-top:20px"><h3>专属日程（可选）</h3><p class="hint">不添加任何行时，使用「设置」标签里的全局兜底日程；添加后该 Provider 仅按此日程预热。</p><div id="acct-schedules"></div>
+        <div class="row" style="margin-top:12px"><button id="add-acct-schedule" type="button" class="secondary">添加日程</button><button id="save-account" type="button">保存此 Provider</button></div>
+      </div>
+    </section>
+    </div>
+  </div>
+</main>
+<script>
+(() => {
+  const storageKey = "coding-plan-5h-quota-warmer.management-key";
+  const els = {
+    key: document.querySelector("#management-key"), remember: document.querySelector("#remember-key"), notice: document.querySelector("#notice"),
+    content: document.querySelector("#content"), tabs: document.querySelector("#tabs"),
+    summary: document.querySelector("#summary"), nextRuns: document.querySelector("#next-runs"), results: document.querySelector("#last-results"),
+    timezone: document.querySelector("#timezone"), maxLogs: document.querySelector("#max-logs"),
+    schedules: document.querySelector("#schedules"), logs: document.querySelector("#logs"), runNow: document.querySelector("#run-now"),
+    logFilter: document.querySelector("#log-filter"),
+    acctProvider: document.querySelector("#acct-provider"), acctAlias: document.querySelector("#acct-alias"), acctModel: document.querySelector("#acct-model"), acctFormat: document.querySelector("#acct-format"),
+    acctUrl: document.querySelector("#acct-url"), acctKey: document.querySelector("#acct-key"), acctPrompt: document.querySelector("#acct-prompt"),
+    acctSchedules: document.querySelector("#acct-schedules")
+  };
+  const panels = {
+    status: document.querySelector("#panel-status"), settings: document.querySelector("#panel-settings"),
+    logs: document.querySelector("#panel-logs"), account: document.querySelector("#panel-account")
+  };
+  let configuration = null;
+  let lastLogs = [];
+  let activeTab = { type: "status", index: -1 };
+
+  // —— 密钥处理：勾选“记住”存 localStorage（长期）；否则存 sessionStorage（会话级，关标签页即清除）——
+  const storedKey = sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey) || "";
+  els.key.value = storedKey;
+  els.remember.checked = Boolean(localStorage.getItem(storageKey));
+  function managementKey() { return els.key.value.trim(); }
+  function persistKeyChoice() {
+    sessionStorage.removeItem(storageKey);
+    localStorage.removeItem(storageKey);
+    const key = managementKey();
+    if (!key) return;
+    if (els.remember.checked) localStorage.setItem(storageKey, key);
+    else sessionStorage.setItem(storageKey, key);
+  }
+  function updateVisibility() { els.content.hidden = managementKey() === ""; }
+
+  function showNotice(text, type) { els.notice.textContent = text || ""; els.notice.className = "notice " + (type || ""); }
+  function formatTime(value) { if (!value || String(value).startsWith("0001-01-01")) return "无"; const date = new Date(value); return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(); }
+  async function request(path, options = {}) {
+    const key = managementKey();
+    if (!key) throw new Error("请先输入管理密钥");
+    persistKeyChoice();
+    const headers = new Headers(options.headers || {});
+    headers.set("Authorization", "Bearer " + key);
+    if (options.body) headers.set("Content-Type", "application/json");
+    const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || payload.error || ("请求失败：HTTP " + response.status));
+    return payload;
+  }
+
+  // —— 账号显示名：别名优先 ——
+  function accountLabel(acct) { return (acct && acct.alias) ? acct.alias : (acct ? acct.provider : ""); }
+  function providerLabel(provider) {
+    if (!configuration) return provider;
+    const acct = (configuration.accounts || []).find(a => a.provider === provider);
+    return accountLabel(acct || { provider: provider });
+  }
+
+  // —— 标签页 ——
+  function isActive(type, index) { return activeTab.type === type && (type !== "account" || activeTab.index === index); }
+  function tabButton(type, index, label) {
+    const node = document.createElement("button");
+    node.type = "button"; node.className = "tab" + (isActive(type, index) ? " active" : "");
+    node.textContent = label;
+    node.addEventListener("click", () => switchTab(type, index));
+    return node;
+  }
+  function renderTabs() {
+    if (!configuration) return;
+    if (activeTab.type === "account" && activeTab.index >= configuration.accounts.length) activeTab = { type: "status", index: -1 };
+    els.tabs.replaceChildren();
+    els.tabs.append(tabButton("status", -1, "状态"), tabButton("settings", -1, "设置"), tabButton("logs", -1, "日志"));
+    configuration.accounts.forEach((acct, index) => {
+      els.tabs.append(tabButton("account", index, accountLabel(acct) || ("账号" + (index + 1))));
+    });
+    const add = document.createElement("button");
+    add.type = "button"; add.className = "tab add"; add.textContent = "+ 添加 Provider";
+    add.addEventListener("click", addAccount);
+    els.tabs.append(add);
+  }
+  function switchTab(type, index) {
+    activeTab = { type: type, index: index };
+    Object.keys(panels).forEach(key => { panels[key].hidden = key !== type; });
+    if (type === "account") renderAccountPanel(index);
+    renderTabs();
+  }
+  function addAccount() {
+    if (!configuration) return;
+    let counter = configuration.accounts.length + 1;
+    while (configuration.accounts.some(a => a.provider === ("provider-" + counter))) counter++;
+    configuration.accounts.push({ provider: "provider-" + counter, api_url: "", api_format: "openai", model: "", prompt: "hello" });
+    renderTabs();
+    switchTab("account", configuration.accounts.length - 1);
+  }
+
+  // —— Provider 面板 ——
+  function renderAccountPanel(index) {
+    const acct = configuration.accounts[index];
+    els.acctProvider.value = acct.provider || "";
+    els.acctAlias.value = acct.alias || "";
+    els.acctModel.value = acct.model || "";
+    els.acctFormat.value = acct.api_format || "openai";
+    els.acctUrl.value = acct.api_url || "";
+    els.acctKey.value = "";
+    els.acctKey.placeholder = acct.api_key ? ("当前：" + acct.api_key + "，留空不修改") : "ark-...";
+    els.acctPrompt.value = acct.prompt || "";
+    if (!Array.isArray(acct.schedules)) acct.schedules = [];
+    renderScheduleEditor(els.acctSchedules, acct.schedules);
+    document.querySelector("#delete-account").disabled = configuration.accounts.length <= 1;
+  }
+  async function saveAccount() {
+    if (activeTab.type !== "account") return;
+    const acct = configuration.accounts[activeTab.index];
+    acct.provider = els.acctProvider.value.trim();
+    acct.alias = els.acctAlias.value.trim();
+    acct.model = els.acctModel.value.trim();
+    acct.api_format = els.acctFormat.value;
+    acct.api_url = els.acctUrl.value.trim();
+    acct.prompt = els.acctPrompt.value.trim();
+    const typedKey = els.acctKey.value.trim();
+    if (typedKey) acct.api_key = typedKey; else delete acct.api_key; // 留空沿用当前密钥（服务端合并）
+    await putConfig();
+  }
+  async function deleteAccount() {
+    if (activeTab.type !== "account") return;
+    if (configuration.accounts.length <= 1) { showNotice("至少保留一个 Provider。", "error"); return; }
+    const acct = configuration.accounts[activeTab.index];
+    if (!window.confirm("确定删除 Provider「" + accountLabel(acct) + "」？")) return;
+    configuration.accounts.splice(activeTab.index, 1);
+    await putConfig();
+    switchTab("status", -1);
+  }
+
+  // —— 日程编辑器（全局兜底与 Provider 专属共用）——
+  function enabledSchedule(schedule) { return schedule.enabled !== false; }
+  function renderScheduleEditor(container, list) {
+    container.replaceChildren();
+    if (!list.length) { const empty = document.createElement("p"); empty.className = "muted"; empty.textContent = "尚未配置任何日程。"; container.append(empty); return; }
+    list.forEach((schedule, index) => {
+      const row = document.createElement("div"); row.className = "row schedule-row"; row.style.marginTop = "8px";
+      const id = document.createElement("input"); id.type = "text"; id.value = schedule.id || ""; id.placeholder = "日程名称";
+      const at = document.createElement("input"); at.type = "time"; at.value = schedule.at || "";
+      const enabled = document.createElement("input"); enabled.type = "checkbox"; enabled.checked = enabledSchedule(schedule);
+      id.addEventListener("input", () => { list[index].id = id.value; });
+      at.addEventListener("input", () => { list[index].at = at.value; });
+      enabled.addEventListener("change", () => { list[index].enabled = enabled.checked; });
+      const enabledLabel = document.createElement("label"); enabledLabel.className = "muted"; enabledLabel.append(enabled, document.createTextNode("启用"));
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "danger"; remove.textContent = "删除";
+      remove.addEventListener("click", () => { list.splice(index, 1); renderScheduleEditor(container, list); });
+      row.append(id, at, enabledLabel, remove);
+      container.append(row);
+    });
+  }
+  function renderSchedules() {
+    if (!configuration) return;
+    if (!Array.isArray(configuration.schedules)) configuration.schedules = [];
+    renderScheduleEditor(els.schedules, configuration.schedules);
+  }
+  // 把全局设置回填到「设置」表单
+  function fillGlobalSettings() {
+    if (!configuration) return;
+    els.timezone.value = configuration.timezone || "";
+    els.maxLogs.value = configuration.max_log_entries || 200;
+    renderSchedules();
+  }
+  async function saveSettings() {
+    configuration.timezone = els.timezone.value.trim();
+    configuration.max_log_entries = Number(els.maxLogs.value || 200);
+    configuration.schedules = configuration.schedules || [];
+    await putConfig();
+  }
+
+  // —— 状态 / 结果 ——
+  function cell(text) { const node = document.createElement("td"); node.textContent = String(text == null ? "" : text); return node; }
+  function renderStatus(status) {
+    els.summary.replaceChildren();
+    const fields = [["运行状态", status.running ? "正在预热" : "空闲"], ["Provider 数量", status.account_count], ["时区", status.timezone], ["上次执行", formatTime(status.last_run)], ["执行来源", status.last_source || "无"], ["日志数量", status.log_count], ["状态文件", status.state_error || "正常"]];
+    fields.forEach(([label, value]) => { const item = document.createElement("div"); item.innerHTML = "<strong></strong><br>"; item.querySelector("strong").textContent = label; item.append(document.createTextNode(String(value))); els.summary.append(item); });
+    const groups = Array.isArray(status.schedules) ? status.schedules : [];
+    els.nextRuns.replaceChildren();
+    if (!groups.length) els.nextRuns.textContent = "未配置账号。";
+    else groups.forEach(group => {
+      const title = document.createElement("div"); title.style.marginTop = "6px";
+      const strong = document.createElement("strong"); strong.textContent = providerLabel(group.provider); title.append(strong);
+      els.nextRuns.append(title);
+      if (!group.runs || !group.runs.length) {
+        const none = document.createElement("div"); none.className = "muted"; none.textContent = "（无启用的日程，不预热）"; els.nextRuns.append(none);
+        return;
+      }
+      group.runs.forEach(run => {
+        const item = document.createElement("div"); item.textContent = run.id + "：" + run.at + " → " + formatTime(run.time);
+        els.nextRuns.append(item);
+      });
+    });
+    renderResults(status.last_results || []);
+  }
+  function renderResults(results) {
+    els.results.replaceChildren();
+    if (!results.length) { els.results.textContent = "尚无已完成的预热记录。"; return; }
+    const table = document.createElement("table"), head = document.createElement("thead"), header = document.createElement("tr");
+    ["Provider", "模型", "结果", "HTTP 状态", "耗时(ms)", "错误"].forEach(value => { const node = document.createElement("th"); node.textContent = value; header.append(node); });
+    head.append(header); table.append(head);
+    const body = document.createElement("tbody");
+    results.forEach(result => {
+      const row = document.createElement("tr");
+      const outcome = document.createElement("td"); outcome.textContent = result.success ? "成功" : "失败"; outcome.className = result.success ? "ok" : "failed";
+      row.append(cell(providerLabel(result.provider)), cell(result.model), outcome, cell(result.status_code || "无"), cell(result.latency_ms || "无"), cell(result.error || "无"));
+      body.append(row);
+    });
+    table.append(body); els.results.append(table);
+  }
+
+  // —— 日志（支持按 Provider 筛选）——
+  function refreshLogFilter() {
+    const previous = els.logFilter.value;
+    els.logFilter.replaceChildren();
+    const all = document.createElement("option"); all.value = ""; all.textContent = "全部 Provider"; els.logFilter.append(all);
+    (configuration ? configuration.accounts : []).forEach(acct => {
+      const option = document.createElement("option"); option.value = acct.provider;
+      option.textContent = acct.alias ? (acct.alias + "（" + acct.provider + "）") : acct.provider;
+      els.logFilter.append(option);
+    });
+    if (previous && Array.from(els.logFilter.options).some(o => o.value === previous)) els.logFilter.value = previous;
+  }
+  function renderLogs(entries) {
+    lastLogs = entries || [];
+    const filter = els.logFilter.value;
+    const shown = filter ? lastLogs.filter(entry => entry.fields && entry.fields.provider === filter) : lastLogs;
+    els.logs.replaceChildren();
+    if (!shown.length) { els.logs.textContent = filter ? "该 Provider 暂无日志。" : "暂无日志。"; return; }
+    const table = document.createElement("table"), head = document.createElement("thead"), header = document.createElement("tr");
+    ["时间", "级别", "事件", "信息", "字段"].forEach(value => { const node = document.createElement("th"); node.textContent = value; header.append(node); });
+    head.append(header); table.append(head);
+    const body = document.createElement("tbody");
+    shown.slice().reverse().forEach(entry => {
+      const row = document.createElement("tr");
+      const fields = entry.fields || {};
+      row.append(cell(formatTime(entry.time)), cell(entry.level), cell(entry.event), cell(entry.message), cell(Object.keys(fields).length ? JSON.stringify(fields) : ""));
+      body.append(row);
+    });
+    table.append(body); els.logs.append(table);
+  }
+  async function loadLogs() { try { renderLogs((await request("/api/logs")).logs || []); } catch (error) { showNotice(error.message, "error"); } }
+
+  // —— 保存 / 加载 ——
+  async function putConfig() {
+    try {
+      const payload = await request("/api/config", { method: "PUT", body: JSON.stringify(configuration) });
+      configuration = payload.config || configuration;
+      if (!Array.isArray(configuration.accounts)) configuration.accounts = [];
+      renderTabs();
+      refreshLogFilter();
+      if (activeTab.type === "account" && activeTab.index < configuration.accounts.length) renderAccountPanel(activeTab.index);
+      showNotice("设置已保存，调度器已重新加载配置。", "success");
+      window.setTimeout(loadAll, 800);
+    } catch (error) { showNotice(error.message, "error"); }
+  }
+  async function loadAll() {
+    try {
+      showNotice("正在读取数据…");
+      const [status, config, logs] = await Promise.all([request("/api/status"), request("/api/config"), request("/api/logs")]);
+      configuration = config;
+      if (!Array.isArray(configuration.accounts)) configuration.accounts = [];
+      renderStatus(status); renderTabs(); refreshLogFilter(); fillGlobalSettings(); renderLogs(logs.logs || []);
+      if (activeTab.type === "account" && activeTab.index < configuration.accounts.length) renderAccountPanel(activeTab.index);
+      showNotice("数据已更新。", "success");
+    } catch (error) { showNotice(error.message, "error"); }
+  }
+  async function loadStatus() {
+    try { renderStatus(await request("/api/status")); } catch (error) { /* 静默刷新 */ }
+  }
+  async function runNow() {
+    try {
+      els.runNow.disabled = true; showNotice("正在执行预热…");
+      const payload = await request("/api/run", { method: "POST", body: "{}" });
+      renderResults(payload.results || []); renderStatus(payload.status || {}); showNotice("预热已完成。", "success");
+      await loadLogs();
+    } catch (error) { showNotice(error.message, "error"); } finally { els.runNow.disabled = false; }
+  }
+
+  // —— 事件绑定 ——
+  document.querySelector("#reload").addEventListener("click", loadAll);
+  document.querySelector("#run-now").addEventListener("click", runNow);
+  document.querySelector("#save-settings").addEventListener("click", saveSettings);
+  document.querySelector("#save-account").addEventListener("click", saveAccount);
+  document.querySelector("#delete-account").addEventListener("click", deleteAccount);
+  document.querySelector("#load-logs").addEventListener("click", loadLogs);
+  els.logFilter.addEventListener("change", () => renderLogs(lastLogs));
+  document.querySelector("#add-schedule").addEventListener("click", () => {
+    if (!configuration) configuration = { schedules: [] };
+    configuration.schedules = configuration.schedules || [];
+    const now = new Date();
+    const at = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+    configuration.schedules.push({ id: "daily-" + at.replace(":", ""), at: at, enabled: true });
+    renderSchedules();
+  });
+  document.querySelector("#add-acct-schedule").addEventListener("click", () => {
+    if (activeTab.type !== "account" || !configuration) return;
+    const acct = configuration.accounts[activeTab.index];
+    if (!Array.isArray(acct.schedules)) acct.schedules = [];
+    const now = new Date();
+    const at = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+    acct.schedules.push({ id: "daily-" + at.replace(":", ""), at: at, enabled: true });
+    renderScheduleEditor(els.acctSchedules, acct.schedules);
+  });
+  document.querySelectorAll(".presets button[data-url]").forEach(node => {
+    node.addEventListener("click", () => {
+      els.acctUrl.value = node.getAttribute("data-url");
+      els.acctFormat.value = node.getAttribute("data-format") || "openai";
+    });
+  });
+  els.key.addEventListener("input", updateVisibility);
+  els.key.addEventListener("keydown", event => { if (event.key === "Enter" && managementKey()) loadAll(); });
+  els.remember.addEventListener("change", persistKeyChoice);
+
+  // —— 初始化：默认展示状态标签 ——
+  async function init() {
+    try {
+      const meta = await (await fetch("/api/meta")).json();
+      if (!meta.management_enabled) {
+        els.key.disabled = true;
+        showNotice("服务端未配置管理密钥（环境变量 QUOTA_WARMER_MANAGEMENT_KEY 或 config.yaml 的 management_key），管理接口已停用。", "error");
+        return;
+      }
+    } catch (error) { /* meta 接口异常时照常允许输入密钥 */ }
+    switchTab("status", -1);
+    updateVisibility();
+    if (managementKey()) loadAll();
+  }
+  window.setInterval(() => { if (managementKey() && configuration) loadStatus(); }, 30000);
+  init();
+})();
+</script>
+</body>
+</html>
