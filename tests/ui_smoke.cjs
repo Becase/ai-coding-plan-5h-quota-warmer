@@ -8,15 +8,19 @@ const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 
 class Element {
   constructor(tag = 'div') {
-    this.tag = tag; this.children = []; this.listeners = {}; this.style = {};
+    this.tag = tag; this.children = []; this.listeners = {}; this.style = {}; this.attributes = {};
     this.value = ''; this.hidden = false;
   }
   append(...nodes) { this.children.push(...nodes); }
-  replaceChildren(...nodes) { this.children = nodes; }
+  replaceChildren(...nodes) { this.children = nodes; if (this.tag === 'select') this.value = nodes[0]?.value || ''; }
   addEventListener(name, callback) { this.listeners[name] = callback; }
   querySelector() { return new Element(); }
+  querySelectorAll(tag) { return this.children.filter(node => node.tag === tag); }
+  setAttribute(name, value) { this.attributes[name] = value; }
+  contains(node) { return node === this || this.children.some(child => child.contains?.(node)); }
+  focus() { this.focused = true; }
   get options() { return this.children; }
-  async trigger(name) { if (this.listeners[name]) await this.listeners[name]({}); }
+  async trigger(name, event = {}) { if (this.listeners[name]) await this.listeners[name]({ target: this, preventDefault() {}, ...event }); }
 }
 
 const defaults = [
@@ -25,17 +29,23 @@ const defaults = [
 ];
 
 async function createPage(pluginMode, options = {}) {
-  const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], new Element()]));
+  const elements = new Map([...html.matchAll(/<([a-z0-9]+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)].map(match => {
+    const element = new Element(match[1]);
+    element.hidden = /\bhidden\b/.test(match[2]); element.required = /\brequired\b/.test(match[2]);
+    return [match[3], element];
+  }));
+  const documentEvents = new Element('document');
   const get = id => { assert(elements.has(id), 'Missing HTML element: ' + id); return elements.get(id); };
   const makeStorage = () => {
     const values = new Map();
     return { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
   };
   const requests = [];
-  let config = { timezone: 'Asia/Shanghai', max_log_entries: 200, schedules: [{ id: 'custom', at: '09:17' }], accounts: [] };
+  let config = { timezone: 'Asia/Shanghai', max_log_entries: 200, schedules: [{ id: 'custom', at: '09:17' }], accounts: structuredClone(options.initialAccounts || []) };
   const models = {
     'selected/account+one@example.com': [{ id: 'codex-model', display_name: 'Codex model' }],
-    'other-account': [{ id: 'antigravity-model' }]
+    'other-account': [{ id: 'antigravity-model' }],
+    'claude-account': [{ id: 'claude-model' }]
   };
   const mount = pluginMode ? '/proxy' : '';
   const base = pluginMode ? '/proxy/v0/management/plugins/coding-plan-5h-quota-warmer' : '';
@@ -63,7 +73,8 @@ async function createPage(pluginMode, options = {}) {
     else if (endpoint === '/api/logs') payload = { logs: [] };
     else if (endpoint === '/api/accounts') payload = { accounts: [
       { id: 'selected/account+one@example.com', provider: 'codex', name: 'CPA account' },
-      { id: 'other-account', provider: 'antigravity', name: 'Other account' }
+      { id: 'other-account', provider: 'antigravity', name: 'Other account' },
+      { id: 'claude-account', provider: 'claude', name: 'Claude account' }
     ] };
     else throw new Error('Unexpected API route: ' + url);
     return reply(payload);
@@ -71,7 +82,8 @@ async function createPage(pluginMode, options = {}) {
   vm.runInNewContext(script, {
     document: {
       querySelector: selector => get(selector.slice(1)), querySelectorAll: () => [],
-      createElement: tag => new Element(tag), createTextNode: text => ({ textContent: text })
+      createElement: tag => new Element(tag), createTextNode: text => ({ textContent: text }),
+      addEventListener: (name, callback) => documentEvents.addEventListener(name, callback)
     },
     location: { pathname: pluginMode ? '/proxy/v0/resource/plugins/coding-plan-5h-quota-warmer/status' : '/' },
     sessionStorage: makeStorage(), localStorage: makeStorage(), fetch, Headers,
@@ -82,10 +94,13 @@ async function createPage(pluginMode, options = {}) {
   get('management-key').value = 'test-management-key';
   await get('reload').trigger('click');
   assert.equal(get('notice').className, 'notice success', get('notice').textContent);
-  const addButton = get('tabs').children.find(element => element.textContent === '+ 添加 Provider');
-  await addButton.trigger('click');
-  assert.equal(get('source-field').hidden, !pluginMode);
-  return { get, requests, options, get config() { return config; } };
+  if (options.addAccount !== false) {
+    const addButton = get('tabs').children.find(element => element.textContent === '+ 添加 Provider');
+    await addButton.trigger('click');
+    assert.equal(get('source-field').hidden, !pluginMode);
+    assert.equal(get('acct-source').value, pluginMode ? 'cpa' : 'api_key');
+  }
+  return { get, requests, options, documentEvents, get config() { return config; } };
 }
 
 async function selectCPA(page, id = 'selected/account+one@example.com', provider = 'codex') {
@@ -98,21 +113,31 @@ async function selectCPA(page, id = 'selected/account+one@example.com', provider
 async function scenario(pluginMode) {
   const page = await createPage(pluginMode), { get, requests } = page;
   get('acct-model').value = 'test-model';
+  assert.equal(get('acct-model').required, true);
+  assert(!get('acct-model').disabled);
+  assert.equal(get('model-field').hidden, false);
   if (pluginMode) {
+    assert.equal(get('management-key-label').textContent, 'CPA 管理密钥');
+    assert.equal(get('toggle-cpa-models').disabled, true);
+    await get('save-account').trigger('click');
+    assert(!requests.some(request => request.options.method === 'PUT'), 'Missing CPA account was saved');
     await selectCPA(page);
     assert.equal(get('cpa-account-field').hidden, false);
-    assert.equal(get('cpa-model-field').hidden, false);
-    for (const id of ['key-field', 'url-field', 'format-field', 'manual-model-field']) assert.equal(get(id).hidden, true);
+    assert.equal(get('toggle-cpa-models').hidden, false);
+    for (const id of ['key-field', 'url-field', 'format-field']) assert.equal(get(id).hidden, true);
     assert.equal(get('acct-url').required, false);
     assert.equal(get('acct-format').disabled, true);
-    assert.equal(get('acct-cpa-model').options[1].value, 'codex-model');
-    get('acct-cpa-model').value = 'not-this-accounts-model';
-    await get('save-account').trigger('click');
-    assert(!requests.some(request => request.options.method === 'PUT'), 'An unlisted model was saved');
-    get('acct-cpa-model').value = 'codex-model';
+    assert(!requests.some(request => request.url.includes('/models?')), 'Model list loaded before opening picker');
+    await get('toggle-cpa-models').trigger('click');
+    assert.equal(get('acct-model').value, 'test-model', 'Opening list overwrote input');
+    assert.equal(get('cpa-model-list').children[0].value, 'codex-model');
+    await get('cpa-model-list').children[0].trigger('click');
+    assert.equal(get('acct-model').value, 'codex-model');
+    assert.equal(get('cpa-model-list').hidden, true);
+    get('acct-model').value = ' manual-alias-not-in-catalog ';
   } else {
     assert.equal(get('cpa-account-field').hidden, true);
-    assert.equal(get('cpa-model-field').hidden, true);
+    assert.equal(get('toggle-cpa-models').hidden, true);
     assert.equal(get('url-field').hidden, false);
     get('acct-url').value = 'https://example.com/v1';
     get('acct-key').value = 'test-api-key';
@@ -123,7 +148,7 @@ async function scenario(pluginMode) {
   await get('save-account').trigger('click');
   assert.equal(get('notice').className, 'notice success', get('notice').textContent);
   const saved = page.config.accounts[0];
-  assert.equal(saved.model, pluginMode ? 'codex-model' : 'test-model');
+  assert.equal(saved.model, pluginMode ? 'manual-alias-not-in-catalog' : 'test-model');
   if (pluginMode) {
     assert.equal(saved.source, 'cpa'); assert.equal(saved.auth_id, 'selected/account+one@example.com'); assert.equal(saved.cpa_provider, 'codex');
     for (const key of ['api_url', 'api_format', 'api_key']) assert(!(key in saved), 'Manual field sent for CPA: ' + key);
@@ -132,8 +157,9 @@ async function scenario(pluginMode) {
     get('acct-source').value = 'api_key';
     await get('acct-source').trigger('change');
     assert.equal(get('cpa-account-field').hidden, true);
-    assert.equal(get('cpa-model-field').hidden, true);
+    assert.equal(get('toggle-cpa-models').hidden, true);
     assert.equal(get('url-field').hidden, false);
+    assert.equal(get('acct-model').value, 'manual-alias-not-in-catalog', 'Switching source lost model');
     get('acct-model').value = 'manual-model'; get('acct-url').value = 'https://manual.example.com/v1'; get('acct-key').value = 'manual-key';
     await get('save-account').trigger('click');
     assert.equal(page.config.accounts[0].source, 'api_key');
@@ -152,41 +178,97 @@ async function scenario(pluginMode) {
 async function modelFailuresAndCompatibility() {
   const legacy = await createPage(true, { legacyModels: true });
   await selectCPA(legacy);
-  assert.equal(legacy.get('acct-cpa-model').options[1].value, 'codex-model');
+  await legacy.get('toggle-cpa-models').trigger('click');
+  assert.equal(legacy.get('cpa-model-list').children[0].value, 'codex-model');
   assert(legacy.requests.some(request => request.url.startsWith('/proxy/v0/management/auth-files/models?')));
 
   const failed = await createPage(true, { modelError: 403 });
   await selectCPA(failed);
-  assert.equal(failed.get('acct-cpa-model').disabled, true);
-  assert(failed.get('cpa-model-hint').textContent.includes('无法读取'));
+  await failed.get('toggle-cpa-models').trigger('click');
+  assert(!failed.get('acct-model').disabled);
+  assert(failed.get('cpa-model-list').children[0].textContent.includes('无法读取'));
   assert(!failed.requests.some(request => request.url.startsWith('/proxy/v0/management/auth-files/models?')), 'Auth failure must not retry another API');
   failed.options.modelError = 0;
-  await failed.get('reload-cpa-models').trigger('click');
-  assert.equal(failed.get('acct-cpa-model').options[1].value, 'codex-model');
+  await failed.get('toggle-cpa-models').trigger('click');
+  await failed.get('toggle-cpa-models').trigger('click');
+  assert.equal(failed.get('cpa-model-list').children[0].value, 'codex-model');
 
   const empty = await createPage(true, { emptyModels: true });
   await selectCPA(empty);
-  assert.equal(empty.get('acct-cpa-model').disabled, true);
-  assert(empty.get('cpa-model-hint').textContent.includes('未返回'));
+  await empty.get('toggle-cpa-models').trigger('click');
+  assert(empty.get('cpa-model-list').children[0].textContent.includes('未返回'));
+  for (const page of [failed, empty]) {
+    page.get('acct-model').value = '';
+    await page.get('save-account').trigger('click');
+    assert(!page.requests.some(request => request.options.method === 'PUT'), 'Empty model was saved');
+    page.get('acct-model').value = 'custom-model-alias';
+    await page.get('save-account').trigger('click');
+    assert.equal(page.config.accounts[0].model, 'custom-model-alias');
+  }
+  const unavailable = await createPage(true, { modelError: 503 });
+  await selectCPA(unavailable, 'claude-account', 'claude');
+  await unavailable.get('toggle-cpa-models').trigger('click');
+  unavailable.get('acct-model').value = 'claude-custom';
+  await unavailable.get('save-account').trigger('click');
+  assert.equal(unavailable.config.accounts[0].cpa_provider, 'claude');
+  assert.equal(unavailable.config.accounts[0].model, 'claude-custom');
+}
 
+async function pickerLifecycle() {
   const stale = await createPage(true, { delayedAccount: 'selected/account+one@example.com' });
-  stale.get('acct-source').value = 'cpa';
-  await stale.get('acct-source').trigger('change');
-  stale.get('acct-cpa-account').value = JSON.stringify(['selected/account+one@example.com', 'codex']);
-  const pending = stale.get('acct-cpa-account').trigger('change');
+  await selectCPA(stale);
+  const pending = stale.get('toggle-cpa-models').trigger('click');
   await new Promise(resolve => setImmediate(resolve));
-  stale.get('acct-cpa-account').value = JSON.stringify(['other-account', 'antigravity']);
-  await stale.get('acct-cpa-account').trigger('change');
-  stale.get('acct-cpa-model').value = 'antigravity-model';
+  await selectCPA(stale, 'other-account', 'antigravity');
+  await stale.get('toggle-cpa-models').trigger('click');
+  stale.get('acct-model').value = 'typed-during-load';
   stale.options.releaseDelayed();
   await pending;
-  assert.equal(stale.get('acct-cpa-model').value, 'antigravity-model');
-  assert(!stale.get('acct-cpa-model').options.some(option => option.value === 'codex-model'), 'Previous account response replaced current models');
+  assert.equal(stale.get('acct-model').value, 'typed-during-load');
+  assert.equal(stale.get('cpa-model-list').children[0].value, 'antigravity-model', 'Previous account response replaced current models');
+  await stale.documentEvents.trigger('keydown', { key: 'Escape' });
+  assert.equal(stale.get('cpa-model-list').hidden, true);
+  assert.equal(stale.get('toggle-cpa-models').focused, true);
+  await stale.get('toggle-cpa-models').trigger('click');
+  await stale.documentEvents.trigger('click', { target: stale.get('notice') });
+  assert.equal(stale.get('cpa-model-list').hidden, true);
+
+  for (const action of ['close', 'source', 'tab']) {
+    const page = await createPage(true, { delayedAccount: 'selected/account+one@example.com' });
+    await selectCPA(page);
+    const pending = page.get('toggle-cpa-models').trigger('click');
+    await new Promise(resolve => setImmediate(resolve));
+    if (action === 'close') await page.get('toggle-cpa-models').trigger('click');
+    else if (action === 'source') {
+      page.get('acct-source').value = 'api_key';
+      await page.get('acct-source').trigger('change');
+    } else await page.get('tabs').children.find(button => button.textContent === '设置').trigger('click');
+    page.options.releaseDelayed(); await pending;
+    assert.equal(page.get('cpa-model-list').hidden, true, action + ' allowed stale list to reopen');
+    assert.equal(page.get('cpa-model-list').children.length, 0);
+  }
+}
+
+async function existingSourcesRemainUnchanged() {
+  for (const source of [undefined, 'api_key', 'cpa']) {
+    const account = { provider: 'existing', source, model: 'existing-alias', api_url: 'https://example.com/v1', api_format: 'openai' };
+    if (source === 'cpa') Object.assign(account, { auth_id: 'claude-account', cpa_provider: 'claude' });
+    const page = await createPage(true, { initialAccounts: [account], addAccount: false });
+    await page.get('tabs').children.find(button => button.textContent === 'existing').trigger('click');
+    assert.equal(page.get('acct-source').value, source || 'api_key');
+    assert.equal(page.get('acct-model').value, 'existing-alias');
+    assert.equal(page.get('toggle-cpa-models').hidden, source !== 'cpa');
+    assert(!page.requests.some(request => request.url.includes('/models?')));
+    await page.get('save-account').trigger('click');
+    assert.equal(page.config.accounts[0].source, source || 'api_key');
+  }
 }
 
 (async () => {
   await scenario(false);
   await scenario(true);
   await modelFailuresAndCompatibility();
+  await pickerLifecycle();
+  await existingSourcesRemainUnchanged();
   console.log('Standalone and CPA frontend smoke passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

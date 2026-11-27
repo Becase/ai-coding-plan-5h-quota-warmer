@@ -251,8 +251,8 @@ func validateConfig(cfg *Config, plugin bool) error {
 			}
 			acct.AuthID = strings.TrimSpace(acct.AuthID)
 			acct.CPAProvider = strings.ToLower(strings.TrimSpace(acct.CPAProvider))
-			if acct.AuthID == "" || (acct.CPAProvider != "codex" && acct.CPAProvider != "antigravity") {
-				return fmt.Errorf("accounts[%d]: CPA auth_id and codex/antigravity cpa_provider are required", index)
+			if acct.AuthID == "" || acct.CPAProvider == "" {
+				return fmt.Errorf("accounts[%d]: CPA auth_id and cpa_provider are required", index)
 			}
 			acct.APIKey, acct.APIURL, acct.APIFormat = "", "", ""
 		} else {

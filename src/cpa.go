@@ -38,11 +38,11 @@ func listCPAAccounts(host cpaHost) ([]cpaAccount, error) {
 	}
 	accounts := []cpaAccount{}
 	for _, acct := range reply.Files {
-		if acct.Provider == "" {
+		if strings.TrimSpace(acct.Provider) == "" {
 			acct.Provider = acct.Type
 		}
-		acct.Provider = strings.ToLower(acct.Provider)
-		if acct.ID == "" || (acct.Provider != "codex" && acct.Provider != "antigravity") {
+		acct.Provider = strings.ToLower(strings.TrimSpace(acct.Provider))
+		if strings.TrimSpace(acct.ID) == "" || acct.Provider == "" {
 			continue
 		}
 		if acct.Label != "" {

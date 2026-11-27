@@ -8,7 +8,9 @@
 
 ## CPA 插件模式
 
-新增 CPA 原生插件入口：可以选择 CPA 托管的 Codex、Antigravity 账号执行预热，也可以继续手动填写 API Key；两种来源可共用或分别设置日程。原有独立服务和 Docker 部署方式继续支持。
+新增 CPA 原生插件入口：可以选择 CPA 返回的托管账号执行预热（不限于 Codex、Antigravity，实际调用能力由 CPA 提供），也可以继续手动填写 API Key；两种来源可共用或分别设置日程。插件新增配置默认使用 CPA 托管账号，模型可以手动输入或从所选账号的模型列表点选。原有独立服务和 Docker 部署方式继续支持。
+
+CPA 插件页面使用 CPA 本身的管理密钥；独立部署使用自己的 `QUOTA_WARMER_MANAGEMENT_KEY` 或配置文件中的 `management_key`，环境变量优先。管理密钥用于管理界面鉴权，与预热请求使用的 API Key、账号令牌分开。
 
 构建、安装、商店发布步骤及验证进度见 [CPA 插件商店接入分析与验收](01-docs/01-CPA插件商店接入分析与验收-261127-codex.md)。正式商店收录仍需发布 GitHub Release 并完成真实 CPA 安装验收。
 

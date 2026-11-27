@@ -52,7 +52,7 @@ func cpaTarget(provider string) Account {
 }
 
 func TestCPABindsExactAccountAndProvider(t *testing.T) {
-	for _, provider := range []string{"codex", "antigravity"} {
+	for _, provider := range []string{"codex", "antigravity", "claude", "gemini", "openai-compatible"} {
 		t.Run(provider, func(t *testing.T) {
 			acct := cpaTarget(provider)
 			host := &fakeCPAHost{accounts: []cpaAccount{{ID: "other", Provider: provider}, {ID: acct.AuthID, Provider: provider}}}
@@ -67,6 +67,44 @@ func TestCPABindsExactAccountAndProvider(t *testing.T) {
 			_ = json.Unmarshal(request.Body, &body)
 			if request.EntryProtocol != "openai" || request.ExitProtocol != "openai" || request.Stream || body["model"] != acct.Model {
 				t.Fatalf("invalid host request: %+v", request)
+			}
+		})
+	}
+}
+
+func TestCPAAccountListAcceptsOtherProviders(t *testing.T) {
+	host := &fakeCPAHost{accounts: []cpaAccount{
+		{ID: "claude-account", Provider: " Claude ", Label: "Claude account"},
+		{ID: "gemini-account", Type: "gemini", Email: "gemini@example.com"},
+		{ID: "disabled-account", Provider: "openai-compatible", Disabled: true},
+		{ID: "missing-provider"},
+		{Provider: "codex"},
+	}}
+	accounts, err := listCPAAccounts(host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accounts) != 3 || accounts[0].Provider != "claude" || accounts[0].Name != "Claude account" || accounts[1].Provider != "gemini" || accounts[1].Name != "gemini@example.com" || !accounts[2].Disabled {
+		t.Fatalf("unexpected account identities: %+v", accounts)
+	}
+}
+
+func TestCPAConfigurationRequiresBindingAndModel(t *testing.T) {
+	for _, field := range []string{"auth_id", "cpa_provider", "model"} {
+		t.Run(field, func(t *testing.T) {
+			acct := cpaTarget("claude")
+			switch field {
+			case "auth_id":
+				acct.AuthID = " "
+			case "cpa_provider":
+				acct.CPAProvider = " "
+			case "model":
+				acct.Model = " "
+			}
+			cfg := defaultConfig()
+			cfg.Accounts = []Account{acct}
+			if err := validateConfig(&cfg, true); err == nil {
+				t.Fatalf("empty %s was accepted", field)
 			}
 		})
 	}
@@ -103,7 +141,7 @@ func TestCPAErrorsNeverExposeHostSecrets(t *testing.T) {
 
 func TestCPAConfigurationAndSharedSchedule(t *testing.T) {
 	cfg := defaultConfig()
-	cfg.Accounts = []Account{cpaTarget("codex"), cpaTarget("antigravity"), validAccount("manual")}
+	cfg.Accounts = []Account{cpaTarget("codex"), cpaTarget("antigravity"), validAccount("manual"), cpaTarget("claude")}
 	cfg.Accounts[0].APIKey = "must-be-removed"
 	cfg.Accounts[0].APIURL = "unused"
 	cfg.Accounts[0].APIFormat = "anthropic"
@@ -114,7 +152,7 @@ func TestCPAConfigurationAndSharedSchedule(t *testing.T) {
 		t.Fatal("CPA credentials retained or legacy API key configuration broken")
 	}
 	at := time.Date(2026, 11, 27, 5, 30, 0, 0, time.FixedZone("CST", 8*3600))
-	if accounts := accountsScheduledAt(cfg, at); len(accounts) != 3 {
+	if accounts := accountsScheduledAt(cfg, at); len(accounts) != 4 {
 		t.Fatalf("shared schedule dropped accounts: %+v", accounts)
 	}
 	if err := Validate(&cfg); err == nil {

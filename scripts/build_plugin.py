@@ -48,7 +48,7 @@ def write_registry(repository, output):
     owner = repository.split("/")[0]
     registry = {"schema_version": 1, "plugins": [{
         "id": PLUGIN_ID, "name": "AI Coding Plan 配额预热器",
-        "description": "按日程预热 CPA 托管的 Codex、Antigravity 账号，同时支持手动 API Key。",
+        "description": "按日程预热 CPA 托管账号，模型可输入或点选，同时支持手动 API Key。",
         "author": owner, "repository": f"https://github.com/{repository}",
         "tags": ["warmup", "codex", "antigravity"],
     }]}
