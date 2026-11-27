@@ -95,9 +95,10 @@ func defaultConfig() Config {
 			APIFormat: "openai",
 		}},
 		Schedules: []Schedule{
-			{ID: "morning-05", At: "05:00"},
-			{ID: "noon-10", At: "10:00"},
-			{ID: "afternoon-15", At: "15:00"},
+			{ID: "morning-0530", At: "05:30"},
+			{ID: "noon-1031", At: "10:31"},
+			{ID: "afternoon-1532", At: "15:32"},
+			{ID: "evening-2033", At: "20:33"},
 		},
 	}
 }

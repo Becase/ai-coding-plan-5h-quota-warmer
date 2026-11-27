@@ -32,15 +32,15 @@ accounts:
 
 # 全局兜底日程：每天在 timezone 时区执行一次；未配置专属日程的账号按此预热。
 schedules:
-  - id: "morning-05"
-    at: "05:00"
+  - id: "morning-0530"
+    at: "05:30"
     enabled: true
-  - id: "noon-10"
-    at: "10:00"
+  - id: "noon-1031"
+    at: "10:31"
     enabled: true
-  - id: "afternoon-15"
-    at: "15:00"
+  - id: "afternoon-1532"
+    at: "15:32"
     enabled: true
-  - id: "evening-20"
-    at: "20:00"
+  - id: "evening-2033"
+    at: "20:33"
     enabled: true

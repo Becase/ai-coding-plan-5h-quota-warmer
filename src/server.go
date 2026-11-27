@@ -85,6 +85,7 @@ func (s *server) handleMeta(w http.ResponseWriter, r *http.Request) {
 		"version":            serviceVersion,
 		"management_enabled": s.hasKey || s.host != nil,
 		"cpa_enabled":        s.host != nil,
+		"default_schedules":  defaultConfig().Schedules,
 	})
 }
 

@@ -105,18 +105,56 @@ func TestCPAConfigurationAndSharedSchedule(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Accounts = []Account{cpaTarget("codex"), cpaTarget("antigravity"), validAccount("manual")}
 	cfg.Accounts[0].APIKey = "must-be-removed"
+	cfg.Accounts[0].APIURL = "unused"
+	cfg.Accounts[0].APIFormat = "anthropic"
 	if err := validateConfig(&cfg, true); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Accounts[0].APIKey != "" || cfg.Accounts[2].Source != "api_key" {
+	if cfg.Accounts[0].APIKey != "" || cfg.Accounts[0].APIURL != "" || cfg.Accounts[0].APIFormat != "" || cfg.Accounts[2].Source != "api_key" {
 		t.Fatal("CPA credentials retained or legacy API key configuration broken")
 	}
-	at := time.Date(2026, 11, 27, 5, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	at := time.Date(2026, 11, 27, 5, 30, 0, 0, time.FixedZone("CST", 8*3600))
 	if accounts := accountsScheduledAt(cfg, at); len(accounts) != 3 {
 		t.Fatalf("shared schedule dropped accounts: %+v", accounts)
 	}
 	if err := Validate(&cfg); err == nil {
 		t.Fatal("standalone configuration should reject CPA accounts")
+	}
+}
+
+func TestDefaultScheduleMetadataPreservesSavedSchedules(t *testing.T) {
+	app := registerTestPlugin(t, &fakeCPAHost{}, t.TempDir())
+	cfg := app.server.warmer.currentConfig()
+	cfg.Schedules = []Schedule{{ID: "custom", At: "09:17"}}
+	raw, _ := json.Marshal(cfg)
+	prefix := "/v0/management/plugins/" + pluginID + "/api/"
+	if response := app.handle(managementRequest{Method: "PUT", Path: prefix + "config", Body: raw}); response.StatusCode != 200 {
+		t.Fatalf("cannot save custom schedule: %s", response.Body)
+	}
+	response := app.handle(managementRequest{Method: "GET", Path: prefix + "meta"})
+	var meta struct {
+		Defaults []Schedule `json:"default_schedules"`
+	}
+	if err := json.Unmarshal(response.Body, &meta); err != nil {
+		t.Fatal(err)
+	}
+	want := []Schedule{
+		{ID: "morning-0530", At: "05:30"}, {ID: "noon-1031", At: "10:31"},
+		{ID: "afternoon-1532", At: "15:32"}, {ID: "evening-2033", At: "20:33"},
+	}
+	if len(meta.Defaults) != len(want) {
+		t.Fatalf("wrong default schedules: %+v", meta.Defaults)
+	}
+	for index, item := range meta.Defaults {
+		if item.ID != want[index].ID || item.At != want[index].At || !scheduleEnabled(item) {
+			t.Fatalf("wrong default schedule: %+v", item)
+		}
+	}
+	app.Close()
+	reloaded := registerTestPlugin(t, &fakeCPAHost{}, app.dir)
+	got := reloaded.server.warmer.currentConfig().Schedules
+	if len(got) != 1 || got[0].ID != "custom" || got[0].At != "09:17" {
+		t.Fatalf("new defaults overwrote saved schedules: %+v", got)
 	}
 }
 

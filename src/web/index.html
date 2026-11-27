@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Coding Plan 配额预热器</title>
   <style>
+    [hidden] { display: none !important; }
     :root {
       color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
       --card-bg: #fff; --card-border: #e3e7ed; --tab-bg: #eef1f5; --tab-fg: #5f6b7a; --fg: #1f2937;
@@ -79,7 +80,7 @@
         <div class="field"><label for="max-logs">日志条数上限</label><input id="max-logs" type="number" min="1" max="2000"></div>
       </div>
       <div style="margin-top:20px"><h3>全局兜底日程</h3><p class="hint">未设置专属日程的 Provider 按此日程预热（每一行每天在设定时区执行一次）。专属日程在各自 Provider 标签页里设置。</p><div id="schedules"></div>
-        <div class="row" style="margin-top:12px"><button id="add-schedule" type="button" class="secondary">添加日程</button><button id="save-settings" type="button">保存设置</button></div>
+        <div class="row" style="margin-top:12px"><button id="add-schedule" type="button" class="secondary">添加日程</button><button id="restore-schedules" type="button" class="secondary">恢复默认日程</button><button id="save-settings" type="button">保存设置</button></div>
       </div>
     </section>
 
@@ -95,11 +96,12 @@
     <section class="tab-panel" id="panel-account" hidden>
       <div class="row"><h2 class="grow">Provider 设置</h2><button id="delete-account" type="button" class="danger">删除此 Provider</button></div>
       <div class="grid">
-        <div class="field"><label for="acct-provider">Provider 标识（唯一，用于环境变量 QUOTA_WARMER_API_KEY_&lt;标识&gt;）</label><input id="acct-provider" type="text" required placeholder="volcano"></div>
+        <div class="field"><label for="acct-provider">Provider 标识（唯一）</label><input id="acct-provider" type="text" required placeholder="volcano"></div>
         <div class="field"><label for="acct-alias">别名（可选，标签页显示名称）</label><input id="acct-alias" type="text" placeholder="留空则显示 Provider 标识"></div>
         <div class="field" id="source-field" hidden><label for="acct-source">账号来源</label><select id="acct-source"><option value="api_key">手动 API Key</option><option value="cpa">CPA 托管账号</option></select></div>
         <div class="field" id="cpa-account-field" hidden><label for="acct-cpa-account">CPA 账号（Codex / Antigravity）</label><select id="acct-cpa-account"></select><p class="hint">绑定具体账号，密钥和令牌由 CPA 管理；账号不可用时跳过。</p></div>
-        <div class="field"><label for="acct-model">模型</label><input id="acct-model" type="text" required placeholder="例如 ark-code-latest"></div>
+        <div class="field" id="manual-model-field"><label for="acct-model">模型</label><input id="acct-model" type="text" required placeholder="例如 ark-code-latest"></div>
+        <div class="field" id="cpa-model-field" hidden><label for="acct-cpa-model">模型（所选 CPA 账号支持的模型）</label><select id="acct-cpa-model" required></select><button id="reload-cpa-models" type="button" class="secondary mini">刷新模型</button><p id="cpa-model-hint" class="hint"></p></div>
         <div class="field" id="format-field"><label for="acct-format">请求格式</label>
           <select id="acct-format">
             <option value="openai">openai（OpenAI 兼容）</option>
@@ -109,14 +111,14 @@
       </div>
       <div class="field" id="url-field" style="margin-top:12px">
         <label for="acct-url">API 地址（Base URL 或完整端点均可）</label>
-        <input id="acct-url" type="text" required placeholder="https://ark.cn-beijing.volces.com/api/coding/v3">
+        <input id="acct-url" type="text" required>
         <div class="presets">
-          <span class="hint">火山 Coding Plan 端点：</span>
+          <span class="hint">火山 Coding Plan 端点快速选择：</span>
           <button type="button" class="secondary mini" data-url="https://ark.cn-beijing.volces.com/api/coding/v3" data-format="openai">OpenAI 兼容</button>
           <button type="button" class="secondary mini" data-url="https://ark.cn-beijing.volces.com/api/coding" data-format="anthropic">Claude（Anthropic 兼容）</button>
         </div>
       </div>
-      <div class="field" id="key-field" style="margin-top:12px"><label for="acct-key">API 密钥</label><input id="acct-key" type="password" autocomplete="new-password" placeholder=""><p class="hint">留空表示沿用当前密钥；填写则替换。页面不会回显完整密钥。若已设置环境变量 QUOTA_WARMER_API_KEY_&lt;标识&gt;，重启后以环境变量为准。</p></div>
+      <div class="field" id="key-field" style="margin-top:12px"><label for="acct-key">API 密钥</label><input id="acct-key" type="password" autocomplete="new-password" placeholder=""><p class="hint">留空表示沿用当前密钥；填写则替换。页面不会回显完整密钥。</p><p id="api-key-env-hint" class="hint"></p></div>
       <div class="field" style="margin-top:12px"><label for="acct-prompt">预热消息</label><textarea id="acct-prompt" required placeholder="hello"></textarea></div>
       <div style="margin-top:20px"><h3>专属日程（可选）</h3><p class="hint">不添加任何行时，使用「设置」标签里的全局兜底日程；添加后该 Provider 仅按此日程预热。</p><div id="acct-schedules"></div>
         <div class="row" style="margin-top:12px"><button id="add-acct-schedule" type="button" class="secondary">添加日程</button><button id="save-account" type="button">保存此 Provider</button></div>
@@ -129,6 +131,7 @@
 (() => {
   const pluginRoute = /^(.*?)\/v(?:0|8)\/resource\/plugins\/coding-plan-5h-quota-warmer\//.exec(location.pathname);
   const pluginMode = Boolean(pluginRoute);
+  const cpaRoot = pluginMode ? pluginRoute[1] : "";
   const apiBase = pluginMode ? pluginRoute[1] + "/v0/management/plugins/coding-plan-5h-quota-warmer" : "";
   const storageKey = "coding-plan-5h-quota-warmer.management-key" + (pluginMode ? ".cpa." + pluginRoute[1] : "");
   const els = {
@@ -140,7 +143,9 @@
     logFilter: document.querySelector("#log-filter"),
     acctProvider: document.querySelector("#acct-provider"), acctAlias: document.querySelector("#acct-alias"), acctModel: document.querySelector("#acct-model"), acctFormat: document.querySelector("#acct-format"),
     acctUrl: document.querySelector("#acct-url"), acctKey: document.querySelector("#acct-key"), acctPrompt: document.querySelector("#acct-prompt"),
-    acctSchedules: document.querySelector("#acct-schedules")
+    acctSchedules: document.querySelector("#acct-schedules"),
+    cpaAccount: document.querySelector("#acct-cpa-account"), cpaModel: document.querySelector("#acct-cpa-model"),
+    cpaModelHint: document.querySelector("#cpa-model-hint"), reloadModels: document.querySelector("#reload-cpa-models")
   };
   const panels = {
     status: document.querySelector("#panel-status"), settings: document.querySelector("#panel-settings"),
@@ -150,6 +155,8 @@
   let lastLogs = [];
   let activeTab = { type: "status", index: -1 };
   let cpaAccounts = [];
+  let modelGeneration = 0;
+  let cpaModelIDs = new Set();
 
   // —— 密钥处理：勾选“记住”存 localStorage（长期）；否则存 sessionStorage（会话级，关标签页即清除）——
   const storedKey = sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey) || "";
@@ -168,16 +175,20 @@
 
   function showNotice(text, type) { els.notice.textContent = text || ""; els.notice.className = "notice " + (type || ""); }
   function formatTime(value) { if (!value || String(value).startsWith("0001-01-01")) return "无"; const date = new Date(value); return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(); }
-  async function request(path, options = {}) {
+  async function request(path, options = {}, base = apiBase) {
     const key = managementKey();
     if (!key) throw new Error("请先输入管理密钥");
     persistKeyChoice();
     const headers = new Headers(options.headers || {});
     headers.set("Authorization", "Bearer " + key);
     if (options.body) headers.set("Content-Type", "application/json");
-    const response = await fetch(apiBase + path, { ...options, headers, credentials: "same-origin" });
+    const response = await fetch(base + path, { ...options, headers, credentials: "same-origin" });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.message || payload.error || ("请求失败：HTTP " + response.status));
+    if (!response.ok) {
+      const error = new Error(payload.message || payload.error || ("请求失败：HTTP " + response.status));
+      error.status = response.status;
+      throw error;
+    }
     return payload;
   }
 
@@ -212,6 +223,7 @@
     els.tabs.append(add);
   }
   function switchTab(type, index) {
+    modelGeneration++;
     activeTab = { type: type, index: index };
     Object.keys(panels).forEach(key => { panels[key].hidden = key !== type; });
     if (type === "account") renderAccountPanel(index);
@@ -260,29 +272,99 @@
     document.querySelector("#delete-account").disabled = !pluginMode && configuration.accounts.length <= 1;
   }
   function updateSourceFields() {
-    const cpa = document.querySelector("#acct-source").value === "cpa";
+    const cpa = pluginMode && document.querySelector("#acct-source").value === "cpa";
     document.querySelector("#cpa-account-field").hidden = !cpa;
-    ["#format-field", "#url-field", "#key-field"].forEach(id => { document.querySelector(id).hidden = cpa; });
+    document.querySelector("#cpa-model-field").hidden = !cpa;
+    ["#format-field", "#url-field", "#key-field", "#manual-model-field"].forEach(id => { document.querySelector(id).hidden = cpa; });
+    [els.acctUrl, els.acctKey, els.acctFormat, els.acctModel].forEach(node => { node.disabled = cpa; });
+    els.acctUrl.required = els.acctModel.required = !cpa;
+    els.cpaAccount.disabled = !cpa;
+    updateEnvHint();
+    if (cpa) {
+      const acct = configuration.accounts[activeTab.index];
+      return loadCPAModels(acct.source === "cpa" ? acct.model : "");
+    }
+    modelGeneration++;
+    cpaModelIDs.clear();
+    els.cpaModel.disabled = true;
+  }
+  function updateEnvHint() {
+    const suffix = Array.from(els.acctProvider.value.trim(), character => /^[A-Z0-9]$/.test(character.toUpperCase()) ? character.toUpperCase() : "_").join("");
+    document.querySelector("#api-key-env-hint").textContent = "可选：通过运行进程的环境变量 QUOTA_WARMER_API_KEY_" + (suffix || "<标识>") + " 在启动时注入 API 密钥，可省略配置文件中的密钥；重启后环境变量优先。";
+  }
+  function modelOption(value, label, disabled = false) {
+    const option = document.createElement("option");
+    option.value = value; option.textContent = label; option.disabled = disabled;
+    return option;
+  }
+  async function loadCPAModels(selectedModel = "") {
+    if (activeTab.type !== "account" || document.querySelector("#acct-source").value !== "cpa") return;
+    const generation = ++modelGeneration;
+    cpaModelIDs.clear();
+    els.cpaModel.replaceChildren(modelOption("", "请先选择 CPA 账号"));
+    els.cpaModel.value = "";
+    els.cpaModel.disabled = true;
+    els.reloadModels.disabled = false;
+    els.cpaModelHint.textContent = "模型列表由所选 CPA 账号提供，请先选择账号。";
+    if (!els.cpaAccount.value) return;
+    const [id, provider] = JSON.parse(els.cpaAccount.value);
+    if (!cpaAccounts.some(account => account.id === id && account.provider === provider)) {
+      els.cpaModelHint.textContent = "绑定账号已不在 CPA 列表中，请重新选择账号。";
+      return;
+    }
+    els.cpaModel.replaceChildren(modelOption("", "正在读取模型…"));
+    els.reloadModels.disabled = true;
+    els.cpaModelHint.textContent = "正在读取此账号的模型列表…";
+    try {
+      const query = "?name=" + encodeURIComponent(id);
+      let payload;
+      try { payload = await request("/credentials/models" + query, {}, cpaRoot + "/v8/management"); }
+      catch (error) {
+        if (error.status !== 404) throw error;
+        payload = await request("/auth-files/models" + query, {}, cpaRoot + "/v0/management");
+      }
+      if (generation !== modelGeneration) return;
+      if (!Array.isArray(payload.models)) throw new Error("模型列表格式错误");
+      const models = [...new Map(payload.models.filter(model => model && typeof model.id === "string" && model.id.trim()).map(model => [model.id, model])).values()].sort((a, b) => a.id.localeCompare(b.id));
+      cpaModelIDs = new Set(models.map(model => model.id));
+      els.cpaModel.replaceChildren(modelOption("", models.length ? "请选择模型" : "该账号没有可用模型"));
+      models.forEach(model => els.cpaModel.append(modelOption(model.id, model.display_name && model.display_name !== model.id ? model.display_name + "（" + model.id + "）" : model.id)));
+      if (selectedModel && !cpaModelIDs.has(selectedModel)) {
+        els.cpaModel.append(modelOption(selectedModel, selectedModel + "（当前账号未提供此模型）", true));
+      }
+      els.cpaModel.value = selectedModel || "";
+      els.cpaModel.disabled = models.length === 0;
+      els.cpaModelHint.textContent = selectedModel && !cpaModelIDs.has(selectedModel) ? "原模型已不在此账号的列表中，请重新选择。" : models.length ? "仅显示所选账号在 CPA 中注册的模型，实际调用权限由 CPA 和上游校验。" : "CPA 未返回此账号的可用模型，请检查账号状态后刷新。";
+    } catch (error) {
+      if (generation !== modelGeneration) return;
+      els.cpaModel.replaceChildren(modelOption("", "模型读取失败"));
+      els.cpaModelHint.textContent = "无法读取此账号的模型，请检查 CPA 管理权限和网络后点击“刷新模型”。";
+    } finally {
+      if (generation === modelGeneration) els.reloadModels.disabled = false;
+    }
   }
   async function saveAccount() {
     if (activeTab.type !== "account") return;
     const acct = configuration.accounts[activeTab.index];
     acct.provider = els.acctProvider.value.trim();
     acct.alias = els.acctAlias.value.trim();
-    acct.model = els.acctModel.value.trim();
-    acct.api_format = els.acctFormat.value;
-    acct.api_url = els.acctUrl.value.trim();
     acct.prompt = els.acctPrompt.value.trim();
-    acct.source = document.querySelector("#acct-source").value;
+    acct.source = pluginMode && document.querySelector("#acct-source").value === "cpa" ? "cpa" : "api_key";
     if (acct.source === "cpa") {
       const value = document.querySelector("#acct-cpa-account").value;
       if (!value) { showNotice("请选择 CPA 账号。", "error"); return; }
+      if (!cpaModelIDs.has(els.cpaModel.value)) { showNotice("请先选择该 CPA 账号的可用模型。", "error"); return; }
       [acct.auth_id, acct.cpa_provider] = JSON.parse(value);
+      acct.model = els.cpaModel.value;
+      delete acct.api_format; delete acct.api_url; delete acct.api_key;
     } else {
       delete acct.auth_id; delete acct.cpa_provider;
+      acct.model = els.acctModel.value.trim();
+      acct.api_format = els.acctFormat.value;
+      acct.api_url = els.acctUrl.value.trim();
+      const typedKey = els.acctKey.value.trim();
+      if (typedKey) acct.api_key = typedKey; else delete acct.api_key; // 留空沿用当前密钥（服务端合并）
     }
-    const typedKey = els.acctKey.value.trim();
-    if (typedKey) acct.api_key = typedKey; else delete acct.api_key; // 留空沿用当前密钥（服务端合并）
     await putConfig();
   }
   async function deleteAccount() {
@@ -463,6 +545,16 @@
     configuration.schedules.push({ id: "daily-" + at.replace(":", ""), at: at, enabled: true });
     renderSchedules();
   });
+  document.querySelector("#restore-schedules").addEventListener("click", async () => {
+    if (!configuration) return;
+    try {
+      const meta = await request("/api/meta");
+      if (!Array.isArray(meta.default_schedules)) throw new Error("无法读取默认日程");
+      configuration.schedules = meta.default_schedules;
+      renderSchedules();
+      showNotice("默认日程已恢复为 05:30 / 10:31 / 15:32 / 20:33，请点击“保存设置”生效。");
+    } catch (error) { showNotice(error.message, "error"); }
+  });
   document.querySelector("#add-acct-schedule").addEventListener("click", () => {
     if (activeTab.type !== "account" || !configuration) return;
     const acct = configuration.accounts[activeTab.index];
@@ -482,6 +574,9 @@
   els.key.addEventListener("keydown", event => { if (event.key === "Enter" && managementKey()) loadAll(); });
   els.remember.addEventListener("change", persistKeyChoice);
   document.querySelector("#acct-source").addEventListener("change", updateSourceFields);
+  els.acctProvider.addEventListener("input", updateEnvHint);
+  els.cpaAccount.addEventListener("change", () => loadCPAModels());
+  els.reloadModels.addEventListener("click", () => loadCPAModels(els.cpaModel.value));
 
   // —— 初始化：默认展示状态标签 ——
   async function init() {
