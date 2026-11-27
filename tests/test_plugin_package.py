@@ -25,8 +25,8 @@ class StorePackageTests(unittest.TestCase):
                 with zipfile.ZipFile(archive) as bundle:
                     self.assertEqual(bundle.namelist(), [builder.PLUGIN_ID + extension])
                     self.assertEqual(bundle.read(bundle.namelist()[0]), library.read_bytes())
-                checksum = (root / f"checksums-{system}-amd64.txt").read_text()
-                self.assertEqual(checksum, hashlib.sha256(archive.read_bytes()).hexdigest() + "  " + archive.name + "\n")
+                checksum = (root / f"checksums-{system}-amd64.txt").read_bytes()
+                self.assertEqual(checksum, (hashlib.sha256(archive.read_bytes()).hexdigest() + "  " + archive.name + "\n").encode("utf-8"))
 
     def test_registry_uses_real_owner_and_repository(self):
         with tempfile.TemporaryDirectory() as directory:

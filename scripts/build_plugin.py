@@ -38,7 +38,7 @@ def package_library(library, output, version, system, arch):
         if bundle.namelist() != [PLUGIN_ID + EXTENSIONS[system]]:
             raise ValueError("Invalid store ZIP layout")
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    (output / f"checksums-{system}-{arch}.txt").write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
+    (output / f"checksums-{system}-{arch}.txt").write_bytes(f"{digest}  {archive.name}\n".encode("utf-8"))
     return archive
 
 
