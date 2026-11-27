@@ -61,14 +61,18 @@ Windows PowerShell（无 Git Bash 时）：
 
 ## Docker 镜像构建与部署
 
+GitHub Actions 的 **Publish GHCR image** 工作流自动发布独立预热服务镜像到 `ghcr.io/becase/coding-plan-5h-quota-warmer`，支持 `linux/amd64` 和 `linux/arm64`。推送 `main` 或在 main 手动运行工作流时更新 `latest`；推送与源码版本匹配的标签（例如 `v0.1.0`）时发布 `0.1.0` 镜像；每次构建还会生成 `sha-<短提交号>` 标签。
+
+工作流使用自动提供的 `GITHUB_TOKEN`，无需额外配置发布密钥。首次发布后，在 GitHub 的 Package settings 中检查镜像可见性；设置为 Public 后才能匿名拉取，详见 [GHCR 官方说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。该镜像运行独立服务，CPA 插件仍通过插件动态库安装。
+
 源码在 `src/` 下，Dockerfile 与两份 compose 文件在项目根目录：
 
 | 文件                       | 用途                                                                                  |
 | -------------------------- | ------------------------------------------------------------------------------------- |
-| `docker-compose.yml`       | **默认**：直接拉取远端镜像（Docker Hub / GHCR）运行，不做本地构建。镜像发布后开箱即用 |
+| `docker-compose.yml`       | **默认**：直接拉取 GHCR 镜像运行，不做本地构建。镜像发布后开箱即用 |
 | `docker-compose-build.yml` | 本地从 `src/` 源码构建镜像并运行，适合自行修改代码或镜像尚未发布时                    |
 
-构建时 Docker 只把 `src/` 送进构建阶段（多阶段构建：`golang:1.23-alpine` 编译 → `alpine:3.20` 运行），根目录的配置、dist/ 产物等均被 `.dockerignore` 排除，不会进入镜像。
+构建时 Docker 只把 `src/` 送进构建阶段（多阶段构建：`golang:1.23-alpine` 编译 → `alpine:3.20` 运行），先运行 Go 测试，再按目标架构编译。根目录的配置、产物和本机缓存均被 `.dockerignore` 排除，不会进入镜像。
 
 ### 方式一：docker compose
 
@@ -333,7 +337,7 @@ HTTPServer(("127.0.0.1", 8000), H).serve_forever()
 ├── dist/               # 预编译二进制（Windows / Linux，不入库）
 ├── ref/                # 参考项目 codex-5h-quota-warmer 源码存档（不参与编译）
 ├── Dockerfile               # 多阶段构建：golang:1.23-alpine 编译 src/ → alpine:3.20 运行
-├── docker-compose.yml       # 默认：拉取远端镜像（Docker Hub / GHCR）运行，不本地构建
+├── docker-compose.yml       # 默认：拉取 GHCR 镜像运行，不本地构建
 ├── docker-compose-build.yml # 备用：本地从 src/ 源码构建镜像并运行
 ├── .dockerignore            # 排除根目录无关文件，构建上下文只保留 src/
 ├── config.yaml              # 运行配置（容器内挂载到 /app/config.yaml，可写）

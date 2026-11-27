@@ -1,10 +1,8 @@
 # 直接拉取镜像运行（不本地构建）。
-# 默认使用 Docker Hub 镜像；发布到其他仓库时改 image 为对应地址即可。
+# 默认使用 GitHub Actions 自动发布到 GHCR 的镜像。
 services:
   coding-plan-5h-quota-warmer:
-    # TODO: 发布后替换为实际镜像地址，如 docker.io/<用户名>/coding-plan-5h-quota-warmer:latest
-    # 或 GitHub Container Registry：ghcr.io/<用户名>/coding-plan-5h-quota-warmer:latest
-    image: docker.io/becase/coding-plan-5h-quota-warmer:latest
+    image: ghcr.io/becase/coding-plan-5h-quota-warmer:latest
     container_name: coding-plan-5h-quota-warmer
     restart: unless-stopped
     # 预留足够的停止宽限期，覆盖执行中的预热请求（客户端超时 60s）

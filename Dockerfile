@@ -1,10 +1,13 @@
 # ---- 构建阶段 ----
-FROM golang:1.23-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS build
 WORKDIR /src
 COPY src/go.mod src/go.sum ./
 RUN go mod download
 COPY src/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/coding-plan-5h-quota-warmer .
+RUN CGO_ENABLED=0 go test ./...
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/coding-plan-5h-quota-warmer .
 
 # ---- 运行阶段 ----
 FROM alpine:3.20
