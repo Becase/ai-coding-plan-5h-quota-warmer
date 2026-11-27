@@ -30,14 +30,17 @@ type Schedule struct {
 // Account 预热目标账号。provider 为扩展点，未来可支持其他 coding plan。
 // Alias 非空时管理页标签页显示别名；Schedules 非空时覆盖全局兜底日程。
 type Account struct {
-	Provider  string     `yaml:"provider"          json:"provider"`
-	Alias     string     `yaml:"alias,omitempty"   json:"alias,omitempty"`
-	APIURL    string     `yaml:"api_url"           json:"api_url"`
-	APIFormat string     `yaml:"api_format"        json:"api_format"`
-	APIKey    string     `yaml:"api_key"           json:"api_key"`
-	Model     string     `yaml:"model"             json:"model"`
-	Prompt    string     `yaml:"prompt"            json:"prompt"`
-	Schedules []Schedule `yaml:"schedules,omitempty" json:"schedules,omitempty"`
+	Source      string     `yaml:"source,omitempty" json:"source,omitempty"`
+	AuthID      string     `yaml:"auth_id,omitempty" json:"auth_id,omitempty"`
+	CPAProvider string     `yaml:"cpa_provider,omitempty" json:"cpa_provider,omitempty"`
+	Provider    string     `yaml:"provider"          json:"provider"`
+	Alias       string     `yaml:"alias,omitempty"   json:"alias,omitempty"`
+	APIURL      string     `yaml:"api_url"           json:"api_url"`
+	APIFormat   string     `yaml:"api_format"        json:"api_format"`
+	APIKey      string     `yaml:"api_key"           json:"api_key"`
+	Model       string     `yaml:"model"             json:"model"`
+	Prompt      string     `yaml:"prompt"            json:"prompt"`
+	Schedules   []Schedule `yaml:"schedules,omitempty" json:"schedules,omitempty"`
 }
 
 // apiKeyEnvPrefix 账号密钥环境变量前缀：QUOTA_WARMER_API_KEY_<PROVIDER>。
@@ -47,6 +50,9 @@ const apiKeyEnvPrefix = "QUOTA_WARMER_API_KEY_"
 // provider 转大写，非字母数字字符替换为下划线，如 mock-claude → MOCK_CLAUDE。
 func applyEnvAPIKeys(cfg *Config) {
 	for index := range cfg.Accounts {
+		if cfg.Accounts[index].Source == "cpa" {
+			continue
+		}
 		name := apiKeyEnvPrefix + envVarSuffix(cfg.Accounts[index].Provider)
 		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 			cfg.Accounts[index].APIKey = value
@@ -98,10 +104,9 @@ func defaultConfig() Config {
 
 // legacyAccount 兼容旧版单账号写法（account:），读取时折算为 accounts 列表。
 type legacyAccount struct {
-	Account  *Account   `yaml:"account"`
+	Account  *Account  `yaml:"account"`
 	Accounts []Account `yaml:"accounts"`
 }
-
 
 func scheduleEnabled(item Schedule) bool {
 	return item.Enabled == nil || *item.Enabled
@@ -185,6 +190,10 @@ func ParseConfig(raw []byte) (Config, error) {
 
 // Validate 校验配置（YAML 与管理 API 的 JSON 修改共用同一套规则）。
 func Validate(cfg *Config) error {
+	return validateConfig(cfg, false)
+}
+
+func validateConfig(cfg *Config, plugin bool) error {
 	cfg.Listen = strings.TrimSpace(cfg.Listen)
 	if cfg.Listen == "" {
 		cfg.Listen = listenDefault
@@ -214,7 +223,7 @@ func Validate(cfg *Config) error {
 	if errSchedules := validateSchedules(cfg.Schedules, "schedules"); errSchedules != nil {
 		return errSchedules
 	}
-	if len(cfg.Accounts) == 0 {
+	if len(cfg.Accounts) == 0 && !plugin {
 		return fmt.Errorf("at least one account is required")
 	}
 	seenProviders := make(map[string]struct{}, len(cfg.Accounts))
@@ -228,33 +237,55 @@ func Validate(cfg *Config) error {
 			return fmt.Errorf("provider %q is duplicated", acct.Provider)
 		}
 		seenProviders[acct.Provider] = struct{}{}
+		acct.Source = strings.ToLower(strings.TrimSpace(acct.Source))
+		if acct.Source == "" {
+			acct.Source = "api_key"
+		}
+		if acct.Source != "api_key" && acct.Source != "cpa" {
+			return fmt.Errorf("accounts[%d].source must be api_key or cpa", index)
+		}
+		if acct.Source == "cpa" {
+			if !plugin {
+				return fmt.Errorf("accounts[%d]: CPA accounts require CPA plugin mode", index)
+			}
+			acct.AuthID = strings.TrimSpace(acct.AuthID)
+			acct.CPAProvider = strings.ToLower(strings.TrimSpace(acct.CPAProvider))
+			if acct.AuthID == "" || (acct.CPAProvider != "codex" && acct.CPAProvider != "antigravity") {
+				return fmt.Errorf("accounts[%d]: CPA auth_id and codex/antigravity cpa_provider are required", index)
+			}
+			acct.APIKey, acct.APIURL, acct.APIFormat = "", "", ""
+		} else {
+			acct.AuthID, acct.CPAProvider = "", ""
+		}
 		acct.Alias = strings.TrimSpace(acct.Alias)
 		if len(acct.Schedules) > 0 {
 			if errAccount := validateSchedules(acct.Schedules, fmt.Sprintf("accounts[%d].schedules", index)); errAccount != nil {
 				return errAccount
 			}
 		}
-		acct.APIURL = strings.TrimSpace(acct.APIURL)
-		if acct.APIURL == "" {
-			return fmt.Errorf("accounts[%d].api_url is required", index)
-		}
-		parsedURL, errURL := url.Parse(acct.APIURL)
-		if errURL != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-			return fmt.Errorf("accounts[%d].api_url %q is not a valid URL", index, acct.APIURL)
-		}
-		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-			return fmt.Errorf("accounts[%d].api_url must use http or https", index)
-		}
-		acct.APIFormat = strings.ToLower(strings.TrimSpace(acct.APIFormat))
-		if acct.APIFormat == "" {
-			acct.APIFormat = "openai"
-		}
-		if _, known := builderFormats()[acct.APIFormat]; !known {
-			return fmt.Errorf("accounts[%d].api_format %q is not supported", index, acct.APIFormat)
-		}
-		acct.APIKey = strings.TrimSpace(acct.APIKey)
-		if acct.APIKey == "" {
-			return fmt.Errorf("accounts[%d].api_key is required", index)
+		if acct.Source == "api_key" {
+			acct.APIURL = strings.TrimSpace(acct.APIURL)
+			if acct.APIURL == "" {
+				return fmt.Errorf("accounts[%d].api_url is required", index)
+			}
+			parsedURL, errURL := url.Parse(acct.APIURL)
+			if errURL != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+				return fmt.Errorf("accounts[%d].api_url %q is not a valid URL", index, acct.APIURL)
+			}
+			if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+				return fmt.Errorf("accounts[%d].api_url must use http or https", index)
+			}
+			acct.APIFormat = strings.ToLower(strings.TrimSpace(acct.APIFormat))
+			if acct.APIFormat == "" {
+				acct.APIFormat = "openai"
+			}
+			if _, known := builderFormats()[acct.APIFormat]; !known {
+				return fmt.Errorf("accounts[%d].api_format %q is not supported", index, acct.APIFormat)
+			}
+			acct.APIKey = strings.TrimSpace(acct.APIKey)
+			if acct.APIKey == "" {
+				return fmt.Errorf("accounts[%d].api_key is required", index)
+			}
 		}
 		acct.Model = strings.TrimSpace(acct.Model)
 		if acct.Model == "" {

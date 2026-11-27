@@ -1,3 +1,5 @@
+//go:build !cpa_plugin
+
 package main
 
 import (

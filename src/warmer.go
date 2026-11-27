@@ -76,6 +76,7 @@ type warmer struct {
 	stateError     string
 	stateLocked    bool
 	client         *http.Client
+	host           cpaHost
 }
 
 func newWarmer(client *http.Client) *warmer {
@@ -191,7 +192,7 @@ func (w *warmer) runScheduleLoop(cfg Config, stop <-chan struct{}, done chan<- s
 				"provider":     cfg.Accounts[accountIndex].Provider,
 				"scheduled_at": next.Time.Format(time.RFC3339),
 			})
-			if _, errRun := w.Run(source, cfg.Accounts[accountIndex:accountIndex+1]); errRun != nil {
+			if _, errRun := w.Run(source, accountsScheduledAt(cfg, next.Time)); errRun != nil {
 				w.recordLog("error", "schedule.failed", "计划预热执行失败", map[string]interface{}{
 					"source": source,
 					"error":  errRun.Error(),
@@ -199,6 +200,25 @@ func (w *warmer) runScheduleLoop(cfg Config, stop <-chan struct{}, done chan<- s
 			}
 		}
 	}
+}
+
+// A shared global schedule must dispatch every account due at that minute.
+func accountsScheduledAt(cfg Config, at time.Time) []Account {
+	location, err := time.LoadLocation(cfg.Timezone)
+	if err != nil {
+		return nil
+	}
+	clock := at.In(location).Format("15:04")
+	accounts := []Account{}
+	for _, acct := range cfg.Accounts {
+		for _, item := range effectiveSchedules(cfg, acct) {
+			if scheduleEnabled(item) && item.At == clock {
+				accounts = append(accounts, acct)
+				break
+			}
+		}
+	}
+	return accounts
 }
 
 // nextAccountScheduledRun 计算所有账号中最早的下一次预热。
@@ -293,7 +313,12 @@ func (w *warmer) Run(source string, accounts []Account) ([]warmResult, error) {
 	results := make([]warmResult, 0, len(accounts))
 	successCount := 0
 	for _, acct := range accounts {
-		result := executeWarm(w.client, acct)
+		var result warmResult
+		if acct.Source == "cpa" {
+			result = executeCPAWarm(w.host, acct)
+		} else {
+			result = executeWarm(w.client, acct)
+		}
 		results = append(results, result)
 		level := "info"
 		message := "预热请求成功"

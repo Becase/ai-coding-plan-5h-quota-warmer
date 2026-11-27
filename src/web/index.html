@@ -48,7 +48,7 @@
 <body>
 <main>
   <h1>AI Coding Plan 配额预热器</h1>
-  <p class="subtitle">每天固定时间向配置的模型端点发送一条预热消息，保持 5 小时配额窗口可用，避免每次从零等待。</p>
+  <p class="subtitle">每天固定时间向选定账号发送一条预热消息，尝试启动配额计时窗口。窗口规则与实际额度以上游服务为准。</p>
 
   <section class="card">
     <h2>管理密钥</h2>
@@ -97,15 +97,17 @@
       <div class="grid">
         <div class="field"><label for="acct-provider">Provider 标识（唯一，用于环境变量 QUOTA_WARMER_API_KEY_&lt;标识&gt;）</label><input id="acct-provider" type="text" required placeholder="volcano"></div>
         <div class="field"><label for="acct-alias">别名（可选，标签页显示名称）</label><input id="acct-alias" type="text" placeholder="留空则显示 Provider 标识"></div>
+        <div class="field" id="source-field" hidden><label for="acct-source">账号来源</label><select id="acct-source"><option value="api_key">手动 API Key</option><option value="cpa">CPA 托管账号</option></select></div>
+        <div class="field" id="cpa-account-field" hidden><label for="acct-cpa-account">CPA 账号（Codex / Antigravity）</label><select id="acct-cpa-account"></select><p class="hint">绑定具体账号，密钥和令牌由 CPA 管理；账号不可用时跳过。</p></div>
         <div class="field"><label for="acct-model">模型</label><input id="acct-model" type="text" required placeholder="例如 ark-code-latest"></div>
-        <div class="field"><label for="acct-format">请求格式</label>
+        <div class="field" id="format-field"><label for="acct-format">请求格式</label>
           <select id="acct-format">
             <option value="openai">openai（OpenAI 兼容）</option>
             <option value="anthropic">anthropic（Anthropic 兼容）</option>
           </select>
         </div>
       </div>
-      <div class="field" style="margin-top:12px">
+      <div class="field" id="url-field" style="margin-top:12px">
         <label for="acct-url">API 地址（Base URL 或完整端点均可）</label>
         <input id="acct-url" type="text" required placeholder="https://ark.cn-beijing.volces.com/api/coding/v3">
         <div class="presets">
@@ -114,7 +116,7 @@
           <button type="button" class="secondary mini" data-url="https://ark.cn-beijing.volces.com/api/coding" data-format="anthropic">Claude（Anthropic 兼容）</button>
         </div>
       </div>
-      <div class="field" style="margin-top:12px"><label for="acct-key">API 密钥</label><input id="acct-key" type="password" autocomplete="new-password" placeholder=""><p class="hint">留空表示沿用当前密钥；填写则替换。页面不会回显完整密钥。若已设置环境变量 QUOTA_WARMER_API_KEY_&lt;标识&gt;，重启后以环境变量为准。</p></div>
+      <div class="field" id="key-field" style="margin-top:12px"><label for="acct-key">API 密钥</label><input id="acct-key" type="password" autocomplete="new-password" placeholder=""><p class="hint">留空表示沿用当前密钥；填写则替换。页面不会回显完整密钥。若已设置环境变量 QUOTA_WARMER_API_KEY_&lt;标识&gt;，重启后以环境变量为准。</p></div>
       <div class="field" style="margin-top:12px"><label for="acct-prompt">预热消息</label><textarea id="acct-prompt" required placeholder="hello"></textarea></div>
       <div style="margin-top:20px"><h3>专属日程（可选）</h3><p class="hint">不添加任何行时，使用「设置」标签里的全局兜底日程；添加后该 Provider 仅按此日程预热。</p><div id="acct-schedules"></div>
         <div class="row" style="margin-top:12px"><button id="add-acct-schedule" type="button" class="secondary">添加日程</button><button id="save-account" type="button">保存此 Provider</button></div>
@@ -125,7 +127,10 @@
 </main>
 <script>
 (() => {
-  const storageKey = "coding-plan-5h-quota-warmer.management-key";
+  const pluginRoute = /^(.*?)\/v(?:0|8)\/resource\/plugins\/coding-plan-5h-quota-warmer\//.exec(location.pathname);
+  const pluginMode = Boolean(pluginRoute);
+  const apiBase = pluginMode ? pluginRoute[1] + "/v0/management/plugins/coding-plan-5h-quota-warmer" : "";
+  const storageKey = "coding-plan-5h-quota-warmer.management-key" + (pluginMode ? ".cpa." + pluginRoute[1] : "");
   const els = {
     key: document.querySelector("#management-key"), remember: document.querySelector("#remember-key"), notice: document.querySelector("#notice"),
     content: document.querySelector("#content"), tabs: document.querySelector("#tabs"),
@@ -144,6 +149,7 @@
   let configuration = null;
   let lastLogs = [];
   let activeTab = { type: "status", index: -1 };
+  let cpaAccounts = [];
 
   // —— 密钥处理：勾选“记住”存 localStorage（长期）；否则存 sessionStorage（会话级，关标签页即清除）——
   const storedKey = sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey) || "";
@@ -169,7 +175,7 @@
     const headers = new Headers(options.headers || {});
     headers.set("Authorization", "Bearer " + key);
     if (options.body) headers.set("Content-Type", "application/json");
-    const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
+    const response = await fetch(apiBase + path, { ...options, headers, credentials: "same-origin" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.message || payload.error || ("请求失败：HTTP " + response.status));
     return payload;
@@ -231,9 +237,32 @@
     els.acctKey.value = "";
     els.acctKey.placeholder = acct.api_key ? ("当前：" + acct.api_key + "，留空不修改") : "ark-...";
     els.acctPrompt.value = acct.prompt || "";
+    document.querySelector("#source-field").hidden = !pluginMode;
+    document.querySelector("#acct-source").value = acct.source || "api_key";
+    const select = document.querySelector("#acct-cpa-account");
+    select.replaceChildren();
+    const placeholder = document.createElement("option"); placeholder.value = ""; placeholder.textContent = "请选择 CPA 账号"; select.append(placeholder);
+    cpaAccounts.forEach(account => {
+      const option = document.createElement("option"); option.value = JSON.stringify([account.id, account.provider]);
+      option.textContent = account.provider + " · " + account.name + (account.disabled || account.unavailable ? "（不可用）" : "");
+      option.disabled = account.disabled || account.unavailable; select.append(option);
+    });
+    if (acct.auth_id) {
+      const value = JSON.stringify([acct.auth_id, acct.cpa_provider]);
+      if (!Array.from(select.options).some(option => option.value === value)) {
+        const missing = document.createElement("option"); missing.value = value; missing.textContent = "绑定账号已不在 CPA 列表：" + acct.auth_id; select.append(missing);
+      }
+      select.value = value;
+    }
+    updateSourceFields();
     if (!Array.isArray(acct.schedules)) acct.schedules = [];
     renderScheduleEditor(els.acctSchedules, acct.schedules);
-    document.querySelector("#delete-account").disabled = configuration.accounts.length <= 1;
+    document.querySelector("#delete-account").disabled = !pluginMode && configuration.accounts.length <= 1;
+  }
+  function updateSourceFields() {
+    const cpa = document.querySelector("#acct-source").value === "cpa";
+    document.querySelector("#cpa-account-field").hidden = !cpa;
+    ["#format-field", "#url-field", "#key-field"].forEach(id => { document.querySelector(id).hidden = cpa; });
   }
   async function saveAccount() {
     if (activeTab.type !== "account") return;
@@ -244,13 +273,21 @@
     acct.api_format = els.acctFormat.value;
     acct.api_url = els.acctUrl.value.trim();
     acct.prompt = els.acctPrompt.value.trim();
+    acct.source = document.querySelector("#acct-source").value;
+    if (acct.source === "cpa") {
+      const value = document.querySelector("#acct-cpa-account").value;
+      if (!value) { showNotice("请选择 CPA 账号。", "error"); return; }
+      [acct.auth_id, acct.cpa_provider] = JSON.parse(value);
+    } else {
+      delete acct.auth_id; delete acct.cpa_provider;
+    }
     const typedKey = els.acctKey.value.trim();
     if (typedKey) acct.api_key = typedKey; else delete acct.api_key; // 留空沿用当前密钥（服务端合并）
     await putConfig();
   }
   async function deleteAccount() {
     if (activeTab.type !== "account") return;
-    if (configuration.accounts.length <= 1) { showNotice("至少保留一个 Provider。", "error"); return; }
+    if (!pluginMode && configuration.accounts.length <= 1) { showNotice("至少保留一个 Provider。", "error"); return; }
     const acct = configuration.accounts[activeTab.index];
     if (!window.confirm("确定删除 Provider「" + accountLabel(acct) + "」？")) return;
     configuration.accounts.splice(activeTab.index, 1);
@@ -378,7 +415,8 @@
       renderTabs();
       refreshLogFilter();
       if (activeTab.type === "account" && activeTab.index < configuration.accounts.length) renderAccountPanel(activeTab.index);
-      showNotice("设置已保存，调度器已重新加载配置。", "success");
+      if (payload.config_persist_error) showNotice("设置已生效，但未保存到文件：" + payload.config_persist_error, "error");
+      else showNotice("设置已保存，调度器已重新加载配置。", "success");
       window.setTimeout(loadAll, 800);
     } catch (error) { showNotice(error.message, "error"); }
   }
@@ -387,6 +425,10 @@
       showNotice("正在读取数据…");
       const [status, config, logs] = await Promise.all([request("/api/status"), request("/api/config"), request("/api/logs")]);
       configuration = config;
+      if (pluginMode) {
+        try { cpaAccounts = (await request("/api/accounts")).accounts || []; }
+        catch (error) { cpaAccounts = []; showNotice("CPA 账号列表暂不可用；可使用手动 API Key。", "error"); }
+      }
       if (!Array.isArray(configuration.accounts)) configuration.accounts = [];
       renderStatus(status); renderTabs(); refreshLogFilter(); fillGlobalSettings(); renderLogs(logs.logs || []);
       if (activeTab.type === "account" && activeTab.index < configuration.accounts.length) renderAccountPanel(activeTab.index);
@@ -439,15 +481,22 @@
   els.key.addEventListener("input", updateVisibility);
   els.key.addEventListener("keydown", event => { if (event.key === "Enter" && managementKey()) loadAll(); });
   els.remember.addEventListener("change", persistKeyChoice);
+  document.querySelector("#acct-source").addEventListener("change", updateSourceFields);
 
   // —— 初始化：默认展示状态标签 ——
   async function init() {
+    if (pluginMode) {
+      els.key.placeholder = "输入 CPA 管理密钥后读取数据";
+      showNotice("使用 CPA 管理密钥连接，可添加 CPA 托管账号或手动 API Key。");
+    }
     try {
-      const meta = await (await fetch("/api/meta")).json();
-      if (!meta.management_enabled) {
-        els.key.disabled = true;
-        showNotice("服务端未配置管理密钥（环境变量 QUOTA_WARMER_MANAGEMENT_KEY 或 config.yaml 的 management_key），管理接口已停用。", "error");
-        return;
+      if (!pluginMode) {
+        const meta = await (await fetch("/api/meta")).json();
+        if (!meta.management_enabled) {
+          els.key.disabled = true;
+          showNotice("服务端未配置管理密钥（环境变量 QUOTA_WARMER_MANAGEMENT_KEY 或 config.yaml 的 management_key），管理接口已停用。", "error");
+          return;
+        }
       }
     } catch (error) { /* meta 接口异常时照常允许输入密钥 */ }
     switchTab("status", -1);

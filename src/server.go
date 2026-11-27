@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 const maxBodyBytes = 64 << 10 // 管理请求请求体上限 64KB
@@ -17,6 +18,8 @@ type server struct {
 	keyHash    [sha256.Size]byte // 有效管理密钥的 SHA-256；全零表示管理 API 停用
 	hasKey     bool
 	configPath string
+	host       cpaHost
+	configMu   sync.Mutex
 }
 
 func newServer(w *warmer, managementKey, configPath string) *server {
@@ -37,6 +40,7 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("/api/config", s.requireAuth(s.handleConfig))
 	mux.HandleFunc("/api/run", s.requireAuth(s.handleRun))
 	mux.HandleFunc("/api/logs", s.requireAuth(s.handleLogs))
+	mux.HandleFunc("/api/accounts", s.requireAuth(s.handleAccounts))
 	return mux
 }
 
@@ -79,7 +83,8 @@ func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"version":            serviceVersion,
-		"management_enabled": s.hasKey,
+		"management_enabled": s.hasKey || s.host != nil,
+		"cpa_enabled":        s.host != nil,
 	})
 }
 
@@ -106,6 +111,8 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // putConfig 处理设置保存：合并 write-only 的 api_key，校验后热重载并写回 YAML。
 func (s *server) putConfig(w http.ResponseWriter, r *http.Request) {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	var incoming Config
 	if errDecode := json.NewDecoder(r.Body).Decode(&incoming); errDecode != nil {
@@ -123,6 +130,9 @@ func (s *server) putConfig(w http.ResponseWriter, r *http.Request) {
 		currentByProvider[acct.Provider] = acct
 	}
 	for index := range incoming.Accounts {
+		if incoming.Accounts[index].Source == "cpa" {
+			continue
+		}
 		incomingKey := strings.TrimSpace(incoming.Accounts[index].APIKey)
 		if incomingKey != "" && incomingKey != maskedAPIKey(currentByProvider[incoming.Accounts[index].Provider].APIKey) {
 			continue
@@ -132,7 +142,7 @@ func (s *server) putConfig(w http.ResponseWriter, r *http.Request) {
 			reference = current.Accounts[index]
 			found = true
 		}
-		if found {
+		if found && reference.Source != "cpa" {
 			incoming.Accounts[index].APIKey = reference.APIKey
 		}
 	}
@@ -147,9 +157,13 @@ func (s *server) putConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		s.warmer.RenameProviders(renames)
 	}
-	if errValidate := Validate(&incoming); errValidate != nil {
+	if errValidate := validateConfig(&incoming, s.host != nil); errValidate != nil {
 		writeErr(w, http.StatusBadRequest, "invalid_config", errValidate.Error())
 		return
+	}
+	if s.host != nil {
+		// Plugin state paths are owned by the lifecycle configuration.
+		incoming.StateFile = current.StateFile
 	}
 	s.warmer.Configure(incoming)
 	response := map[string]interface{}{"config": maskedConfig(incoming)}
@@ -158,6 +172,19 @@ func (s *server) putConfig(w http.ResponseWriter, r *http.Request) {
 		response["config_persist_error"] = errSave.Error()
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *server) handleAccounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET")
+		return
+	}
+	accounts, err := listCPAAccounts(s.host)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "cpa_unavailable", "无法读取 CPA 账号列表")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"accounts": accounts})
 }
 
 func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {

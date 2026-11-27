@@ -6,6 +6,12 @@
 
 设计参考 [codex-5h-quota-warmer](https://github.com/Windyskr/codex-5h-quota-warmer)（CLIProxyAPI 插件），本项目改为独立服务：直接对你在配置中提供的 API URL 发请求，不依赖任何代理。参考项目源码存档在 [ref/](ref/)。
 
+## CPA 插件模式
+
+新增 CPA 原生插件入口：可以选择 CPA 托管的 Codex、Antigravity 账号执行预热，也可以继续手动填写 API Key；两种来源可共用或分别设置日程。原有独立服务和 Docker 部署方式继续支持。
+
+构建、安装、商店发布步骤及验证进度见 [CPA 插件商店接入分析与验收](01-docs/01-CPA插件商店接入分析与验收-261127-codex.md)。正式商店收录仍需发布 GitHub Release 并完成真实 CPA 安装验收。
+
 ## 特性
 
 - **每天固定时间预热**：`schedules` 配置多行 `HH:MM`，按 IANA 时区每天执行一次（例如 05:00 / 10:00 / 15:00 正好间隔 5 小时）。启动时不执行预热，只等待下一次计划时间。支持**全局兜底日程 + 每账号专属日程**：账号未设置专属日程时使用全局日程，设置后仅按专属日程预热。
@@ -21,6 +27,7 @@
 最短路径三步（完整步骤与说明见下方「Docker 镜像构建与部署」章节）：
 
 ```bash
+docker pull ghcr.io/becase/coding-plan-5h-quota-warmer:latest
 cp .env.example .env                  # 编辑 QUOTA_WARMER_MANAGEMENT_KEY 为强随机串
 $EDITOR config.yaml                   # 填入 api_url 与 model（api_key 也可由环境变量注入）
 docker compose up -d                  # 拉取镜像运行（本地构建则用 -f docker-compose-build.yml，见下）
@@ -67,9 +74,10 @@ Windows PowerShell（无 Git Bash 时）：
 
 **拉取远端镜像运行（默认，docker-compose.yml）**：
 
-> ghcr.io/becase/coding-plan-5h-quota-warmer:latest
-
 ```bash
+
+docker pull ghcr.io/becase/coding-plan-5h-quota-warmer:latest
+
 # 1. 准备环境变量（管理密钥必须强随机，生成方式见「生成强随机串」）
 cp .env.example .env
 $EDITOR .env
