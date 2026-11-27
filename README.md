@@ -63,7 +63,7 @@ Windows PowerShell（无 Git Bash 时）：
 
 ## Docker 镜像构建与部署
 
-GitHub Actions 的 **Publish GHCR image** 工作流自动发布独立预热服务镜像到 `ghcr.io/becase/coding-plan-5h-quota-warmer`，支持 `linux/amd64` 和 `linux/arm64`。推送 `main` 或在 main 手动运行工作流时更新 `latest`；推送与源码版本匹配的标签（例如 `v0.1.0`）时发布 `0.1.0` 镜像；每次构建还会生成 `sha-<短提交号>` 标签。
+GitHub Actions 的 **Publish GHCR image** 工作流自动发布独立预热服务镜像到 `ghcr.io/becase/coding-plan-5h-quota-warmer`，支持 `linux/amd64` 和 `linux/arm64`。推送 `main` 或在 main 手动运行工作流时更新 `latest`；推送与源码版本匹配的标签（例如 `v0.2.0`）时发布 `0.2.0` 镜像；每次构建还会生成 `sha-<短提交号>` 标签。
 
 工作流使用自动提供的 `GITHUB_TOKEN`，无需额外配置发布密钥。首次发布后，在 GitHub 的 Package settings 中检查镜像可见性；设置为 Public 后才能匿名拉取，详见 [GHCR 官方说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。该镜像运行独立服务，CPA 插件仍通过插件动态库安装。
 
