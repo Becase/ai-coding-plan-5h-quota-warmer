@@ -12,6 +12,8 @@
 
 CPA 插件页面使用 CPA 本身的管理密钥；独立部署使用自己的 `QUOTA_WARMER_MANAGEMENT_KEY` 或配置文件中的 `management_key`，环境变量优先。管理密钥用于管理界面鉴权，与预热请求使用的 API Key、账号令牌分开。
 
+插件发布覆盖 Linux、macOS、Windows 各 amd64 / arm64，共六个平台。每个平台均在对应 runner 上构建并加载动态库验证，六个 ZIP 的内容与 SHA-256 全部校验通过后才生成 Release 草稿；草稿同时包含 `checksums.txt` 和 `registry.json`。
+
 构建、安装、商店发布步骤及验证进度见 [CPA 插件商店接入分析与验收](01-docs/01-CPA插件商店接入分析与验收-261127-codex.md)。正式商店收录仍需发布 GitHub Release 并完成真实 CPA 安装验收。
 
 ## 特性
@@ -63,7 +65,7 @@ Windows PowerShell（无 Git Bash 时）：
 
 ## Docker 镜像构建与部署
 
-GitHub Actions 的 **Publish GHCR image** 工作流自动发布独立预热服务镜像到 `ghcr.io/becase/coding-plan-5h-quota-warmer`，支持 `linux/amd64` 和 `linux/arm64`。推送 `main` 或在 main 手动运行工作流时更新 `latest`；推送与源码版本匹配的标签（例如 `v0.2.0`）时发布 `0.2.0` 镜像；每次构建还会生成 `sha-<短提交号>` 标签。
+GitHub Actions 的 **Publish GHCR image** 工作流自动发布独立预热服务镜像到 `ghcr.io/becase/coding-plan-5h-quota-warmer`，支持 `linux/amd64` 和 `linux/arm64`。推送 `main` 或在 main 手动运行工作流时更新 `latest`；推送与源码版本匹配的标签（例如 `v0.2.1`）时发布 `0.2.1` 镜像；每次构建还会生成 `sha-<短提交号>` 标签。
 
 工作流使用自动提供的 `GITHUB_TOKEN`，无需额外配置发布密钥。首次发布后，在 GitHub 的 Package settings 中检查镜像可见性；设置为 Public 后才能匿名拉取，详见 [GHCR 官方说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。该镜像运行独立服务，CPA 插件仍通过插件动态库安装。
 
