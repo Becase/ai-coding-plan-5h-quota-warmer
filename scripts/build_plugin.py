@@ -13,6 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ID = "coding-plan-5h-quota-warmer"
 EXTENSIONS = {"linux": ".so", "darwin": ".dylib", "windows": ".dll"}
+RELEASE_TARGETS = tuple((system, arch) for system in EXTENSIONS for arch in ("amd64", "arm64"))
 
 
 def source_version():
@@ -56,12 +57,35 @@ def write_registry(repository, output):
     (output / "registry.json").write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def assemble_release(output, version):
+    expected = {f"{PLUGIN_ID}_{version}_{system}_{arch}.zip" for system, arch in RELEASE_TARGETS}
+    actual = {archive.name for archive in output.glob("*.zip")}
+    if actual != expected:
+        raise ValueError(f"Incomplete release: missing={sorted(expected - actual)}, unexpected={sorted(actual - expected)}")
+    checksums = []
+    for system, arch in RELEASE_TARGETS:
+        archive = output / f"{PLUGIN_ID}_{version}_{system}_{arch}.zip"
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        line = f"{digest}  {archive.name}"
+        recorded = (output / f"checksums-{system}-{arch}.txt").read_text(encoding="utf-8").splitlines()
+        if recorded != [line]:
+            raise ValueError("Checksum mismatch: " + archive.name)
+        with zipfile.ZipFile(archive) as bundle:
+            if bundle.namelist() != [PLUGIN_ID + EXTENSIONS[system]]:
+                raise ValueError("Invalid store ZIP layout: " + archive.name)
+        checksums.append(line)
+    (output / "checksums.txt").write_bytes(("\n".join(checksums) + "\n").encode("utf-8"))
+    print(f"Verified {len(checksums)} platform ZIPs; wrote checksums.txt")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-tag", default="")
     parser.add_argument("--target", default="", help="Require this native OS_arch")
     parser.add_argument("--output", type=Path, default=ROOT / "plugin-dist")
-    parser.add_argument("--registry", metavar="OWNER/REPO", help="Generate registry.json only")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--registry", metavar="OWNER/REPO", help="Generate registry.json only")
+    mode.add_argument("--assemble-release", action="store_true", help="Require and verify all six platform ZIPs before writing checksums.txt")
     args = parser.parse_args()
     output = args.output.resolve()
     version = source_version()
@@ -69,6 +93,9 @@ def main():
         parser.error("Release tag must match serviceVersion: v" + version)
     if args.registry:
         write_registry(args.registry, output)
+        return
+    if args.assemble_release:
+        assemble_release(output, version)
         return
     system, arch = native_target()
     if args.target and args.target != f"{system}_{arch}":
