@@ -13,7 +13,7 @@ import (
 
 const (
 	serviceName    = "coding-plan-5h-quota-warmer"
-	serviceVersion = "0.2.1"
+	serviceVersion = "0.2.2"
 )
 
 // httpError 带建议 HTTP 状态码的错误，供管理 API 映射响应。
