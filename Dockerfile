@@ -11,14 +11,15 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
 
 # ---- 运行阶段 ----
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata su-exec \
   && adduser -D -u 10001 warmer \
   && mkdir -p /app/data && chown warmer:warmer /app/data
 COPY --from=build /out/coding-plan-5h-quota-warmer /usr/local/bin/coding-plan-5h-quota-warmer
-USER warmer
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
 WORKDIR /app
 EXPOSE 1688
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
   CMD wget -qO- http://127.0.0.1:1688/healthz || exit 1
-ENTRYPOINT ["coding-plan-5h-quota-warmer"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["-config", "/app/config.yaml"]

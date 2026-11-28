@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -193,7 +194,39 @@ func (s *server) handleRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
 		return
 	}
-	results, errRun := s.warmer.Run("manual", nil)
+	var input map[string]json.RawMessage
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	errDecode := decoder.Decode(&input)
+	if errDecode != io.EOF {
+		if errDecode != nil || input == nil {
+			writeErr(w, http.StatusBadRequest, "invalid_run", "预热请求必须是 JSON 对象")
+			return
+		}
+		if decoder.Decode(new(interface{})) != io.EOF {
+			writeErr(w, http.StatusBadRequest, "invalid_run", "预热请求只能包含一个 JSON 对象")
+			return
+		}
+	}
+	var accounts []Account
+	if raw, selected := input["provider"]; selected {
+		var provider string
+		if json.Unmarshal(raw, &provider) != nil || strings.TrimSpace(provider) == "" {
+			writeErr(w, http.StatusBadRequest, "invalid_provider", "Provider 标识不能为空")
+			return
+		}
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		for _, account := range s.warmer.currentConfig().Accounts {
+			if account.Provider == provider {
+				accounts = []Account{account}
+				break
+			}
+		}
+		if len(accounts) == 0 {
+			writeErr(w, http.StatusNotFound, "provider_not_found", "Provider 不存在")
+			return
+		}
+	}
+	results, errRun := s.warmer.Run("manual", accounts)
 	if errRun != nil {
 		status := http.StatusInternalServerError
 		var httpErr *httpError

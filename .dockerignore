@@ -1,7 +1,8 @@
-# 仅发送构建定义与 src/；配置、密钥、插件包和本机工具缓存不进入构建上下文。
+# 仅发送构建定义、入口脚本与 src/；配置、密钥、插件包和本机工具缓存不进入构建上下文。
 **
 !Dockerfile
 !.dockerignore
+!docker-entrypoint.sh
 !src/
 !src/**
 **/.cache/

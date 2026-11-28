@@ -103,7 +103,8 @@ def main(library):
             assert registration["capabilities"] == {"management_api": True}
             assert len(rpc("management.register", {})["routes"]) == 7
             resource = rpc("management.handle", {"Method": "GET", "Path": "/v0/resource/plugins/" + PLUGIN_ID + "/status"})
-            assert base64.b64decode(resource["Body"]) == (ROOT / "src/web/index.html").read_bytes()
+            expected_html = (ROOT / "src/web/index.html").read_bytes().replace(b"{{APP_VERSION}}", source_version().encode())
+            assert base64.b64decode(resource["Body"]) == expected_html
             assert endpoint("GET", "accounts")["accounts"][0]["id"] == "native-account"
             config = endpoint("GET", "config")
             assert not config["accounts"]

@@ -42,6 +42,7 @@ async function createPage(pluginMode, options = {}) {
   };
   const requests = [];
   let config = { timezone: 'Asia/Shanghai', max_log_entries: 200, schedules: [{ id: 'custom', at: '09:17' }], accounts: structuredClone(options.initialAccounts || []) };
+  let status = options.status || { running: false, schedules: [], last_results: [] };
   const models = {
     'selected/account+one@example.com': [{ id: 'codex-model', display_name: 'Codex model' }],
     'other-account': [{ id: 'antigravity-model' }],
@@ -69,7 +70,13 @@ async function createPage(pluginMode, options = {}) {
     else if (endpoint === '/api/config' && requestOptions.method === 'PUT') {
       config = JSON.parse(requestOptions.body); payload = { config };
     } else if (endpoint === '/api/config') payload = config;
-    else if (endpoint === '/api/status') payload = { running: false, schedules: [], last_results: [] };
+    else if (endpoint === '/api/status') payload = status;
+    else if (endpoint === '/api/run') {
+      if (options.delayedRun) await new Promise(resolve => { options.releaseRun = resolve; });
+      if (options.runError) return reply({ message: 'test warmup failed' }, 409);
+      status = options.runStatus || status;
+      payload = { results: status.last_results?.slice(0, 1), status };
+    }
     else if (endpoint === '/api/logs') payload = { logs: [] };
     else if (endpoint === '/api/accounts') payload = { accounts: [
       { id: 'selected/account+one@example.com', provider: 'codex', name: 'CPA account' },
@@ -264,11 +271,60 @@ async function existingSourcesRemainUnchanged() {
   }
 }
 
+async function providerWarmupControls() {
+  const first = { provider: 'first', alias: 'First alias', model: 'model-one' };
+  const second = { provider: 'second', model: 'model-two' };
+  const oldResult = { provider: 'second', model: 'model-two', success: true, finished_at: '2026-11-27T21:30:00Z' };
+  const status = { account_count: 2, timezone: 'Asia/Shanghai', running: false,
+    schedules: [first, second].map(account => ({ provider: account.provider, runs: [] })), last_results: [oldResult] };
+  const runStatus = { ...status, last_results: [
+    { provider: 'first', model: 'model-one', success: true, finished_at: '2026-11-28T02:31:15Z' }, oldResult
+  ] };
+  for (const pluginMode of [false, true]) {
+    const page = await createPage(pluginMode, { initialAccounts: [first, second], addAccount: false, status, runStatus, delayedRun: true });
+    const buttons = () => page.get('next-runs').children.filter(node => node.className === 'provider-heading').map(node => node.children[1]);
+    assert.equal(buttons().length, 2);
+    assert.equal(buttons()[0].textContent, '预热');
+    assert.equal(buttons()[0].title, '预热');
+    const pending = buttons()[0].trigger('click');
+    await new Promise(resolve => setImmediate(resolve));
+    assert(buttons().every(button => button.disabled));
+    assert(page.get('run-now').disabled);
+    await buttons()[1].trigger('click');
+    await page.get('run-now').trigger('click');
+    const runs = () => page.requests.filter(request => request.url.endsWith('/api/run'));
+    assert.equal(runs().length, 1, 'Concurrent click sent a second warmup');
+    assert.deepEqual(JSON.parse(runs()[0].options.body), { provider: 'first' }, 'Alias used as provider ID');
+    page.options.releaseRun(); await pending;
+    assert(buttons().every(button => !button.disabled));
+    assert(!page.get('run-now').disabled);
+    const rows = page.get('last-results').children[0].children[1].children;
+    assert.equal(rows.length, 2, 'Single warmup dropped another provider result');
+    assert.equal(rows[0].children[0].textContent, 'First alias');
+    assert.equal(rows[0].children[1].textContent, '2026-11-28 10:31:15');
+    assert.equal(rows[1].children[1].textContent, '2026-11-28 05:30:00');
+    assert(page.requests.at(-1).url.endsWith('/api/logs'), 'Completion did not refresh logs');
+    page.options.delayedRun = false;
+    await page.get('run-now').trigger('click');
+    assert.deepEqual(JSON.parse(runs().at(-1).options.body), {}, 'Global warmup no longer targets all providers');
+    page.options.runError = true;
+    await buttons()[0].trigger('click');
+    assert.equal(page.get('notice').textContent, 'test warmup failed');
+    assert(!page.get('run-now').disabled, 'Failed request left controls disabled');
+  }
+  const single = await createPage(false, { initialAccounts: [first], addAccount: false, status: { ...status, account_count: 1, schedules: status.schedules.slice(0, 1) } });
+  assert.equal(single.get('next-runs').children[0].children.length, 1, 'Single-provider page shows a redundant button');
+  const busy = await createPage(true, { initialAccounts: [first, second], addAccount: false, status: { ...status, running: true } });
+  assert(busy.get('run-now').disabled, 'Server-running state did not disable global warmup');
+  assert(busy.get('next-runs').children.filter(node => node.className === 'provider-heading').every(node => node.children[1].disabled));
+}
+
 (async () => {
   await scenario(false);
   await scenario(true);
   await modelFailuresAndCompatibility();
   await pickerLifecycle();
   await existingSourcesRemainUnchanged();
+  await providerWarmupControls();
   console.log('Standalone and CPA frontend smoke passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

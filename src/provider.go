@@ -12,12 +12,13 @@ import (
 
 // warmResult 单次预热请求的结果。
 type warmResult struct {
-	Provider   string `json:"provider"`
-	Model      string `json:"model"`
-	StatusCode int    `json:"status_code,omitempty"`
-	Success    bool   `json:"success"`
-	LatencyMS  int64  `json:"latency_ms"`
-	Error      string `json:"error,omitempty"`
+	Provider   string     `json:"provider"`
+	Model      string     `json:"model"`
+	StatusCode int        `json:"status_code,omitempty"`
+	Success    bool       `json:"success"`
+	LatencyMS  int64      `json:"latency_ms"`
+	Error      string     `json:"error,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // RequestBuilder 根据账号配置构造一次预热 HTTP 请求。

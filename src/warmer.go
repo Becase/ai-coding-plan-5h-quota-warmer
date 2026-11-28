@@ -32,10 +32,10 @@ type scheduledRun struct {
 }
 
 type logEntry struct {
-	Time    time.Time          `json:"time"`
-	Level   string             `json:"level"`
-	Event   string             `json:"event"`
-	Message string             `json:"message"`
+	Time    time.Time              `json:"time"`
+	Level   string                 `json:"level"`
+	Event   string                 `json:"event"`
+	Message string                 `json:"message"`
 	Fields  map[string]interface{} `json:"fields,omitempty"`
 }
 
@@ -54,9 +54,9 @@ type Status struct {
 	Schedules    []accountNextRuns `json:"schedules"`
 	LastRun      *time.Time        `json:"last_run,omitempty"`
 	LastSource   string            `json:"last_source,omitempty"`
-	LastResults []warmResult      `json:"last_results"`
+	LastResults  []warmResult      `json:"last_results"`
 	LogCount     int               `json:"log_count"`
-	StateError  string            `json:"state_error,omitempty"`
+	StateError   string            `json:"state_error,omitempty"`
 	Config       Config            `json:"config"`
 }
 
@@ -106,12 +106,19 @@ func (w *warmer) Configure(cfg Config) {
 			w.lastRun = state.LastRun
 			w.lastSource = state.LastSource
 			w.lastResults = state.LastResults
+			for index := range w.lastResults {
+				if w.lastResults[index].FinishedAt == nil && !state.LastRun.IsZero() {
+					finishedAt := state.LastRun.UTC()
+					w.lastResults[index].FinishedAt = &finishedAt
+				}
+			}
 			w.logs = state.Logs
 			if len(w.logs) > cfg.MaxLogEntries {
 				w.logs = append([]logEntry(nil), w.logs[len(w.logs)-cfg.MaxLogEntries:]...)
 			}
 		}
 	}
+	w.mergeResultsLocked(nil)
 	loadError := w.stateError
 	w.stop = make(chan struct{})
 	w.done = make(chan struct{})
@@ -319,6 +326,8 @@ func (w *warmer) Run(source string, accounts []Account) ([]warmResult, error) {
 		} else {
 			result = executeWarm(w.client, acct)
 		}
+		finishedAt := time.Now().UTC()
+		result.FinishedAt = &finishedAt
 		results = append(results, result)
 		level := "info"
 		message := "预热请求成功"
@@ -338,19 +347,37 @@ func (w *warmer) Run(source string, accounts []Account) ([]warmResult, error) {
 		})
 	}
 	w.mu.Lock()
-	w.lastResults = results
+	w.mergeResultsLocked(results)
 	w.mu.Unlock()
 	finishLevel := "info"
 	if successCount != len(results) {
 		finishLevel = "warn"
 	}
 	w.recordLog(finishLevel, "warmup.finished", "预热结束", map[string]interface{}{
-		"source":         source,
-		"account_count":  len(results),
-		"success_count":  successCount,
-		"failure_count":  len(results) - successCount,
+		"source":        source,
+		"account_count": len(results),
+		"success_count": successCount,
+		"failure_count": len(results) - successCount,
 	})
 	return results, nil
+}
+
+// mergeResultsLocked retains each configured provider's latest result in config order.
+// The caller must hold w.mu for writing.
+func (w *warmer) mergeResultsLocked(updates []warmResult) {
+	latest := make(map[string]warmResult, len(w.lastResults)+len(updates))
+	for _, result := range w.lastResults {
+		latest[result.Provider] = result
+	}
+	for _, result := range updates {
+		latest[result.Provider] = result
+	}
+	w.lastResults = nil
+	for _, account := range w.config.Accounts {
+		if result, ok := latest[account.Provider]; ok {
+			w.lastResults = append(w.lastResults, result)
+		}
+	}
 }
 
 func (w *warmer) Status() Status {

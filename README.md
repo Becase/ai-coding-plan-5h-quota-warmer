@@ -186,7 +186,7 @@ docker build -t coding-plan-5h-quota-warmer:latest . && docker rm -f quota-warme
 
 - 多阶段构建：`golang:1.23-alpine`（编译，`CGO_ENABLED=0` 静态链接）→ `alpine:3.20`（运行）
 - 最终镜像约 15–20MB，包含 ca-certificates 与 tzdata
-- 容器以非 root 用户 `warmer`（uid 10001）运行，`EXPOSE 1688`
+- 容器启动时先初始化 `/app/data` 挂载目录及其中普通文件、目录的属主和必要权限，再以 `warmer`（UID 10001）运行服务，`EXPOSE 1688`。保留已有状态，不跟随符号链接，不修改配置文件挂载；显式指定非 root `user` 时跳过初始化，挂载目录需自行保证可写。
 - HEALTHCHECK 每 30s 探测 `/healthz`
 
 ## 本地构建运行
@@ -343,7 +343,8 @@ HTTPServer(("127.0.0.1", 8000), H).serve_forever()
 ├── Dockerfile               # 多阶段构建：golang:1.23-alpine 编译 src/ → alpine:3.20 运行
 ├── docker-compose.yml       # 默认：拉取 GHCR 镜像运行，不本地构建
 ├── docker-compose-build.yml # 备用：本地从 src/ 源码构建镜像并运行
-├── .dockerignore            # 排除根目录无关文件，构建上下文只保留 src/
+├── .dockerignore            # 构建上下文仅保留构建定义、入口脚本与 src/
+├── docker-entrypoint.sh     # 初始化数据挂载权限后，以 UID 10001 启动服务
 ├── config.yaml              # 运行配置（容器内挂载到 /app/config.yaml，可写）
 └── .env(.example)           # 管理密钥与账号密钥环境变量
 ```

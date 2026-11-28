@@ -14,6 +14,10 @@ const defaults = [
   { id: 'afternoon-1532', at: '15:32' }, { id: 'evening-2033', at: '20:33' }
 ];
 let config = { timezone: 'Asia/Shanghai', max_log_entries: 200, schedules: [], accounts: [] };
+let latestResults = [];
+const currentStatus = () => ({ running: false, account_count: config.accounts.length, timezone: config.timezone,
+  schedules: config.accounts.map(account => ({ provider: account.provider, runs: [{ id: 'morning', at: '05:30', time: '2026-11-28T21:30:00Z' }] })),
+  last_results: latestResults });
 
 async function browserChecks() {
   const get = id => document.getElementById(id);
@@ -27,6 +31,9 @@ async function browserChecks() {
     throw Error('Timed out waiting for UI');
   };
   try {
+    check(/^v\d+\.\d+\.\d+$/.test(get('app-version').textContent), 'Version missing before authentication');
+    check(document.querySelector('.github-link').href === 'https://github.com/Becase/ai-coding-plan-5h-quota-warmer', 'GitHub link points to wrong repository');
+    check(!document.getElementById('management-key-title') && document.querySelectorAll('label[for="management-key"]').length === 1, 'Duplicate management key heading remains');
     get('management-key').value = 'browser-test-management-key';
     get('management-key').dispatchEvent(new Event('input'));
     get('reload').click();
@@ -55,7 +62,7 @@ async function browserChecks() {
     check(!visible('cpa-model-list') && document.activeElement === get('toggle-cpa-models'), 'Escape did not close picker and restore focus');
     get('toggle-cpa-models').click();
     await waitFor(() => get('cpa-model-list').querySelector('button'));
-    get('management-key-title').click();
+    get('management-key-label').click();
     check(!visible('cpa-model-list'), 'Outside click did not close picker');
     get('toggle-cpa-models').click();
     await waitFor(() => get('cpa-model-list').querySelector('button'));
@@ -78,6 +85,24 @@ async function browserChecks() {
     check(times.join(',') === '05:30,10:31,15:32,20:33', 'Default schedule times differ from request');
     get('save-settings').click();
     await waitFor(() => get('notice').textContent.includes('设置已保存'));
+    await fetch('/test/prepare-status', { method: 'POST', headers: { Authorization: 'Bearer browser-test-management-key' } });
+    get('reload').click();
+    await waitFor(() => document.querySelectorAll('.provider-run').length === 2);
+    [...get('tabs').children].find(node => node.textContent === '状态').click();
+    const buttons = () => [...document.querySelectorAll('.provider-run')];
+    check(buttons().every(button => button.textContent === '预热' && button.title === '预热'), 'Provider button text differs from request');
+    const titleSize = parseFloat(getComputedStyle(get('next-runs').previousElementSibling).fontSize);
+    const providerSize = parseFloat(getComputedStyle(document.querySelector('.provider-heading')).fontSize);
+    const scheduleSize = parseFloat(getComputedStyle(get('next-runs')).fontSize);
+    check(titleSize > providerSize && providerSize > scheduleSize, 'Provider font hierarchy is incorrect');
+    buttons()[0].click();
+    check(get('run-now').disabled && buttons().every(button => button.disabled), 'Warmup controls remain clickable during a request');
+    await waitFor(() => get('notice').textContent === '预热已完成。' && !get('run-now').disabled);
+    const rows = [...document.querySelectorAll('#last-results tbody tr')];
+    check(rows.length === 2 && rows[0].cells[0].textContent === 'CPA alias', 'Latest results lost provider or alias');
+    check(rows[0].cells[1].textContent === '2026-11-28 10:31:15' && rows[1].cells[1].textContent === '2026-11-28 05:30:00', 'Completion dates or configured timezone are incorrect');
+    get('run-now').click();
+    await waitFor(() => get('notice').textContent === '预热已完成。' && !get('run-now').disabled);
     document.body.dataset.uiTestResult = 'passed';
   } catch (error) {
     document.body.dataset.uiTestResult = 'failed';
@@ -88,6 +113,7 @@ async function browserChecks() {
 }
 
 const html = fs.readFileSync(path.join(root, 'src/web/index.html'), 'utf8')
+  .replaceAll('{{APP_VERSION}}', fs.readFileSync(path.join(root, 'src/warmer.go'), 'utf8').match(/serviceVersion\s*=\s*"([^"]+)"/)[1])
   .replace('</body>', '<script>(' + browserChecks.toString() + ')();</script></body>');
 const server = http.createServer(async (request, response) => {
   try {
@@ -97,11 +123,22 @@ const server = http.createServer(async (request, response) => {
     }
     assert.equal(request.headers.authorization, 'Bearer browser-test-management-key');
     let payload;
-    if (url.pathname.endsWith('/credentials/models')) {
+    if (url.pathname === '/test/prepare-status') {
+      config.accounts = [{ provider: 'cpa-one', alias: 'CPA alias', source: 'cpa', auth_id: 'browser-account', cpa_provider: 'claude', model: 'browser-model' },
+        { provider: 'manual-two', model: 'manual-model' }];
+      latestResults = [{ provider: 'manual-two', model: 'manual-model', success: true, finished_at: '2026-11-27T21:30:00Z' }];
+      payload = {};
+    } else if (url.pathname.endsWith('/api/run')) {
+      const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      const selection = JSON.parse(Buffer.concat(chunks));
+      assert(selection.provider === 'cpa-one' || Object.keys(selection).length === 0, 'Wrong provider selector');
+      latestResults = [{ provider: 'cpa-one', model: 'browser-model', success: true, finished_at: '2026-11-28T02:31:15Z' }, latestResults.at(-1)];
+      payload = { results: latestResults.slice(0, selection.provider ? 1 : 2), status: currentStatus() };
+    } else if (url.pathname.endsWith('/credentials/models')) {
       assert.equal(url.searchParams.get('name'), 'browser-account');
       payload = { models: [{ id: 'browser-model' }] };
     } else if (url.pathname.endsWith('/api/accounts')) payload = { accounts: [{ id: 'browser-account', provider: 'claude', name: 'Browser account' }] };
-    else if (url.pathname.endsWith('/api/status')) payload = { running: false, schedules: [], last_results: [] };
+    else if (url.pathname.endsWith('/api/status')) payload = currentStatus();
     else if (url.pathname.endsWith('/api/logs')) payload = { logs: [] };
     else if (url.pathname.endsWith('/api/meta')) payload = { default_schedules: defaults };
     else if (url.pathname.endsWith('/api/config')) {
@@ -138,7 +175,7 @@ server.listen(0, '127.0.0.1', () => {
     clearTimeout(timeout); server.close();
     fs.mkdirSync(path.join(root, '.cache'), { recursive: true });
     fs.writeFileSync(path.join(root, '.cache/ui-browser-result.html'), output);
-    if (code === 0 && output.includes('data-ui-test-result="passed"')) console.log('Real browser CPA defaults, editable model picker, field visibility and schedule checks passed');
+    if (code === 0 && output.includes('data-ui-test-result="passed"')) console.log('Real browser CPA settings, header/version, Provider warmup controls and dated results passed');
     else {
       console.error(output.match(/<pre id="browser-test-error">([\s\S]*?)<\/pre>/)?.[1] || errors.slice(-2000) || 'Browser validation did not complete');
       process.exitCode = 1;

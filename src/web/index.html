@@ -14,6 +14,13 @@
     main { max-width: 1100px; margin: 0 auto; padding: 28px 18px 48px; }
     h1 { margin: 0; font-size: 28px; } h2 { margin: 0 0 14px; font-size: 18px; } h3 { margin: 14px 0 8px; font-size: 15px; }
     .subtitle { color: #5f6b7a; margin: 8px 0 24px; }
+    .page-heading { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .version { font-size: 13px; font-weight: 400; color: var(--tab-fg); }
+    .github-link { display: inline-flex; color: inherit; }
+    #panel-status h3 { font-size: 18px; }
+    .provider-heading { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 16px; color: var(--fg); }
+    button.provider-run { padding: 0 5px; font-size: 12px; line-height: 16px; border-radius: 4px; }
+    #last-results { overflow-x: auto; }
     .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 18px; margin: 16px 0; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
     .field { display: grid; gap: 6px; } label { font-weight: 600; font-size: 14px; } input, textarea, select, button { font: inherit; }
@@ -54,11 +61,13 @@
 </head>
 <body>
 <main>
-  <h1>AI Coding Plan 配额预热器</h1>
+  <div class="page-heading">
+    <h1>AI Coding Plan 配额预热器</h1><small id="app-version" class="version">v{{APP_VERSION}}</small>
+    <a class="github-link" href="https://github.com/Becase/ai-coding-plan-5h-quota-warmer" target="_blank" rel="noopener noreferrer" aria-label="GitHub 仓库" title="GitHub 仓库"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.09c-3.13.68-3.79-1.33-3.79-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1 1.72 2.64 1.22 3.28.93.1-.73.39-1.22.71-1.5-2.5-.28-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.02-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.09 1.15a10.76 10.76 0 0 1 5.62 0c2.14-1.45 3.08-1.15 3.08-1.15.62 1.55.23 2.7.12 2.98.72.79 1.16 1.79 1.16 3.02 0 4.32-2.64 5.27-5.15 5.55.41.35.77 1.04.77 2.1v3.08c0 .3.2.65.78.54A11.25 11.25 0 0 0 12 .75Z"/></svg></a>
+  </div>
   <p class="subtitle">每天固定时间向选定账号发送一条预热消息，尝试启动配额计时窗口。窗口规则与实际额度以上游服务为准。</p>
 
   <section class="card">
-    <h2 id="management-key-title">管理密钥</h2>
     <div class="row">
       <div class="field grow"><label id="management-key-label" for="management-key">管理密钥</label><input id="management-key" type="password" autocomplete="current-password" placeholder="输入后按回车或点击读取数据"></div>
       <label class="muted"><input id="remember-key" type="checkbox"> 在本机浏览器记住密钥</label>
@@ -166,6 +175,10 @@
   let activeTab = { type: "status", index: -1 };
   let cpaAccounts = [];
   let modelGeneration = 0;
+  let warmupPending = false;
+  let statusRunning = false;
+  let statusTimezone = "";
+  let providerRunButtons = [];
 
   // —— 密钥处理：勾选“记住”存 localStorage（长期）；否则存 sessionStorage（会话级，关标签页即清除）——
   const storedKey = sessionStorage.getItem(storageKey) || localStorage.getItem(storageKey) || "";
@@ -183,7 +196,17 @@
   function updateVisibility() { els.content.hidden = managementKey() === ""; }
 
   function showNotice(text, type) { els.notice.textContent = text || ""; els.notice.className = "notice " + (type || ""); }
-  function formatTime(value) { if (!value || String(value).startsWith("0001-01-01")) return "无"; const date = new Date(value); return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(); }
+  function formatTime(value) {
+    if (!value || String(value).startsWith("0001-01-01")) return "无";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: statusTimezone || configuration?.timezone || undefined,
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
+  }
   async function request(path, options = {}, base = apiBase) {
     const key = managementKey();
     if (!key) throw new Error("请先输入管理密钥");
@@ -420,6 +443,9 @@
   // —— 状态 / 结果 ——
   function cell(text) { const node = document.createElement("td"); node.textContent = String(text == null ? "" : text); return node; }
   function renderStatus(status) {
+    statusRunning = Boolean(status.running);
+    statusTimezone = status.timezone || configuration?.timezone || "";
+    providerRunButtons = [];
     els.summary.replaceChildren();
     const fields = [["运行状态", status.running ? "正在预热" : "空闲"], ["Provider 数量", status.account_count], ["时区", status.timezone], ["上次执行", formatTime(status.last_run)], ["执行来源", status.last_source || "无"], ["日志数量", status.log_count], ["状态文件", status.state_error || "正常"]];
     fields.forEach(([label, value]) => { const item = document.createElement("div"); item.innerHTML = "<strong></strong><br>"; item.querySelector("strong").textContent = label; item.append(document.createTextNode(String(value))); els.summary.append(item); });
@@ -427,8 +453,15 @@
     els.nextRuns.replaceChildren();
     if (!groups.length) els.nextRuns.textContent = "未配置账号。";
     else groups.forEach(group => {
-      const title = document.createElement("div"); title.style.marginTop = "6px";
+      const title = document.createElement("div"); title.className = "provider-heading";
       const strong = document.createElement("strong"); strong.textContent = providerLabel(group.provider); title.append(strong);
+      if (status.account_count > 1) {
+        const button = document.createElement("button"); button.type = "button"; button.className = "secondary provider-run";
+        button.textContent = "预热"; button.title = "预热";
+        button.setAttribute("aria-label", "预热 " + providerLabel(group.provider));
+        button.addEventListener("click", () => runNow(group.provider));
+        providerRunButtons.push(button); title.append(button);
+      }
       els.nextRuns.append(title);
       if (!group.runs || !group.runs.length) {
         const none = document.createElement("div"); none.className = "muted"; none.textContent = "（无启用的日程，不预热）"; els.nextRuns.append(none);
@@ -439,19 +472,23 @@
         els.nextRuns.append(item);
       });
     });
+    updateRunButtons();
     renderResults(status.last_results || []);
+  }
+  function updateRunButtons() {
+    [els.runNow, ...providerRunButtons].forEach(button => { button.disabled = warmupPending || statusRunning; });
   }
   function renderResults(results) {
     els.results.replaceChildren();
     if (!results.length) { els.results.textContent = "尚无已完成的预热记录。"; return; }
     const table = document.createElement("table"), head = document.createElement("thead"), header = document.createElement("tr");
-    ["Provider", "模型", "结果", "HTTP 状态", "耗时(ms)", "错误"].forEach(value => { const node = document.createElement("th"); node.textContent = value; header.append(node); });
+    ["Provider", "时间", "模型", "结果", "HTTP 状态", "耗时(ms)", "错误"].forEach(value => { const node = document.createElement("th"); node.textContent = value; header.append(node); });
     head.append(header); table.append(head);
     const body = document.createElement("tbody");
     results.forEach(result => {
       const row = document.createElement("tr");
       const outcome = document.createElement("td"); outcome.textContent = result.success ? "成功" : "失败"; outcome.className = result.success ? "ok" : "failed";
-      row.append(cell(providerLabel(result.provider)), cell(result.model), outcome, cell(result.status_code || "无"), cell(result.latency_ms || "无"), cell(result.error || "无"));
+      row.append(cell(providerLabel(result.provider)), cell(formatTime(result.finished_at)), cell(result.model), outcome, cell(result.status_code || "无"), cell(result.latency_ms || "无"), cell(result.error || "无"));
       body.append(row);
     });
     table.append(body); els.results.append(table);
@@ -521,18 +558,22 @@
   async function loadStatus() {
     try { renderStatus(await request("/api/status")); } catch (error) { /* 静默刷新 */ }
   }
-  async function runNow() {
+  async function runNow(provider) {
+    if (warmupPending || statusRunning) return;
+    warmupPending = true; updateRunButtons();
     try {
-      els.runNow.disabled = true; showNotice("正在执行预热…");
-      const payload = await request("/api/run", { method: "POST", body: "{}" });
-      renderResults(payload.results || []); renderStatus(payload.status || {}); showNotice("预热已完成。", "success");
+      showNotice("正在执行预热…");
+      const payload = await request("/api/run", { method: "POST", body: JSON.stringify(provider ? { provider } : {}) });
+      renderStatus(payload.status || {}); showNotice("预热已完成。", "success");
       await loadLogs();
-    } catch (error) { showNotice(error.message, "error"); } finally { els.runNow.disabled = false; }
+    } catch (error) {
+      showNotice(error.message, "error"); await loadStatus();
+    } finally { warmupPending = false; updateRunButtons(); }
   }
 
   // —— 事件绑定 ——
   document.querySelector("#reload").addEventListener("click", loadAll);
-  document.querySelector("#run-now").addEventListener("click", runNow);
+  document.querySelector("#run-now").addEventListener("click", () => runNow());
   document.querySelector("#save-settings").addEventListener("click", saveSettings);
   document.querySelector("#save-account").addEventListener("click", saveAccount);
   document.querySelector("#delete-account").addEventListener("click", deleteAccount);
@@ -597,7 +638,6 @@
   // —— 初始化：默认展示状态标签 ——
   async function init() {
     if (pluginMode) {
-      document.querySelector("#management-key-title").textContent = "CPA 管理密钥";
       document.querySelector("#management-key-label").textContent = "CPA 管理密钥";
       els.key.placeholder = "输入 CPA 管理密钥后读取数据";
       showNotice("使用 CPA 管理密钥连接，可添加 CPA 托管账号或手动 API Key。");
